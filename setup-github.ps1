@@ -114,19 +114,27 @@ Set-Location $repoPath
 if (Test-Path ".git") {
     Write-Host "Git repo already exists, updating config..." -ForegroundColor Gray
 } else {
-    git init
+    git init -b main
+    if ($LASTEXITCODE -ne 0) {
+        # Fallback for older Git versions that don't support -b flag
+        git init
+        if ($LASTEXITCODE -eq 0) {
+            git branch -M main 2>&1 | Out-Null
+        }
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Failed to initialize Git repository!" -ForegroundColor Red
         Write-Host "Press any key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
-    Write-Host "Git repo initialized!" -ForegroundColor Green
+    Write-Host "Git repo initialized with main branch!" -ForegroundColor Green
 }
 
 # Set Git config
 git config user.name "$GITHUB_USERNAME"
 git config user.email "$GITHUB_EMAIL"
+git config init.defaultBranch main
 Write-Host "Git config set for $GITHUB_USERNAME" -ForegroundColor Green
 
 # Step 6: Setup remote
