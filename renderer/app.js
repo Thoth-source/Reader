@@ -402,6 +402,53 @@ if (sidebarToggle && !sidebar.classList.contains("collapsed")) {
 // -------------------------------------------------------
 // SPLIT VIEW LOGIC
 // -------------------------------------------------------
+
+// Helper function to get spread setting based on split view state
+function getSpreadSetting() {
+  const isSplitMode = viewersContainer.classList.contains("split-mode");
+  // When split view is open: single page. When closed: two-page spread
+  return isSplitMode ? "none" : "always";
+}
+
+// Helper function to update EPUB spread settings
+function updateEPUBSpread() {
+  const spreadSetting = getSpreadSetting();
+  if (rendition1 && viewerType1 === 'epub') {
+    try {
+      // EPUB.js: change spread setting and resize
+      if (rendition1.views && rendition1.views.length > 0) {
+        // Update spread on the views manager
+        rendition1.views.spread(spreadSetting);
+      }
+      // Resize to apply the new spread
+      setTimeout(() => {
+        if (rendition1) rendition1.resize();
+      }, 100);
+    } catch (e) {
+      console.warn("Could not update spread for rendition1:", e);
+      // Fallback: just resize
+      setTimeout(() => {
+        if (rendition1) rendition1.resize();
+      }, 100);
+    }
+  }
+  if (rendition2 && viewerType2 === 'epub') {
+    try {
+      if (rendition2.views && rendition2.views.length > 0) {
+        rendition2.views.spread(spreadSetting);
+      }
+      setTimeout(() => {
+        if (rendition2) rendition2.resize();
+      }, 100);
+    } catch (e) {
+      console.warn("Could not update spread for rendition2:", e);
+      setTimeout(() => {
+        if (rendition2) rendition2.resize();
+      }, 100);
+    }
+  }
+}
+
 splitBtn?.addEventListener("click", () => {
   const isHidden = viewerWrapper2.classList.contains("hidden");
   if (isHidden) {
@@ -416,6 +463,10 @@ splitBtn?.addEventListener("click", () => {
     }
     
     if (views.reader.style.display === "none") switchView("reader");
+    
+    // Update EPUB spread to single page when split view opens
+    updateEPUBSpread();
+    
     setTimeout(() => {
       if (rendition1) rendition1.resize();
       if (rendition2) rendition2.resize();
@@ -427,6 +478,10 @@ splitBtn?.addEventListener("click", () => {
     sidebar2.classList.add("hidden");
     viewersContainer.classList.remove("split-mode");
     splitBtn.classList.remove("active");
+    
+    // Update EPUB spread to two-page when split view closes
+    updateEPUBSpread();
+    
     setTimeout(() => {
       if (rendition1) rendition1.resize();
       if (viewerType1 === 'pdf') renderPdfPage(1);
@@ -1146,12 +1201,14 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     document.getElementById("pdf-pages-1").innerHTML = "";
     
     book1 = ePub(arrayBuffer);
+    // Use dynamic spread: two pages when split view is closed, single page when open
+    const spreadSetting = getSpreadSetting();
     rendition1 = book1.renderTo("viewer", { 
       width: "100%", 
       height: "100%", 
       flow: "paginated", 
       manager: "default",
-      spread: "none"
+      spread: spreadSetting
     });
     
     // Apply custom styles for better footnote/link rendering
@@ -1224,11 +1281,13 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     document.getElementById("pdf-pages-2").innerHTML = "";
     
     book2 = ePub(arrayBuffer);
+    // Use dynamic spread: two pages when split view is closed, single page when open
+    const spreadSetting = getSpreadSetting();
     rendition2 = book2.renderTo("viewer-2", { 
       width: "100%",
       height: "100%",
       flow: "paginated",
-      spread: "none"
+      spread: spreadSetting
     });
     
     // Apply custom styles for better footnote/link rendering

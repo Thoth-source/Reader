@@ -33,4 +33,6 @@ setup-github.bat
 push-to-github.ps1
 push-to-github.bat
 GITHUB_SETUP.md
+create-release.ps1
+create-release.bat
 
