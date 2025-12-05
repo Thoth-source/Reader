@@ -27,4 +27,10 @@ npm-debug.log*
 # User data (audiobooks, library data - these are personal)
 # Note: electron-store data is in AppData, not here
 
+# GitHub setup files (local development only)
+setup-github.ps1
+setup-github.bat
+push-to-github.ps1
+push-to-github.bat
+GITHUB_SETUP.md
 
