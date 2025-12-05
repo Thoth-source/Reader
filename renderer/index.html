@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Reader</title>
+
+  <!-- Load JSZip first -->
+  <script src="../node_modules/jszip/dist/jszip.min.js"></script>
+  <script>
+    window.JSZip = JSZip; // required by epub.js
+  </script>
+
+  <!-- Load epub.js -->
+  <script src="../node_modules/epubjs/dist/epub.min.js"></script>
+  
+  <!-- Load PDF.js -->
+  <script src="../node_modules/pdfjs-dist/build/pdf.min.mjs" type="module"></script>
+
+  <link rel="stylesheet" href="style.css" />
+  <!-- FontAwesome for icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+
+<!-- LOADING SCREEN -->
+<div id="loading-screen">
+  <div class="loading-content">
+    <div class="cards-container">
+      <div class="shuffle-card card-1">
+        <div class="card-inner">
+          <i class="fas fa-book"></i>
+        </div>
+      </div>
+      <div class="shuffle-card card-2">
+        <div class="card-inner">
+          <i class="fas fa-bookmark"></i>
+        </div>
+      </div>
+      <div class="shuffle-card card-3">
+        <div class="card-inner">
+          <i class="fas fa-headphones"></i>
+        </div>
+      </div>
+    </div>
+    <div class="loading-text">
+      <span class="app-name">Reader</span>
+      <span class="loading-dots">Loading<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></span>
+    </div>
+  </div>
+</div>
+
+
+<!-- SETTINGS MODAL -->
+<div id="settings-modal" class="modal" style="display:none;">
+  <div class="modal-content settings-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-cog"></i> Settings</h3>
+    
+    <div class="settings-tabs">
+      <button class="settings-tab active" data-tab="general">General</button>
+      <button class="settings-tab" data-tab="reading">Reading</button>
+      <button class="settings-tab" data-tab="voice">Voice</button>
+    </div>
+    
+    <!-- General Settings -->
+    <div class="settings-panel active" id="settings-general">
+      <div class="input-group">
+        <label for="themeSelect">App Theme</label>
+        <select id="themeSelect">
+          <option value="light">Light</option>
+          <option value="sepia">Sepia</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+      
+      <div class="input-group">
+        <label>Default View</label>
+        <div class="toggle-group">
+          <button class="toggle-btn active" data-value="single">Single</button>
+          <button class="toggle-btn" data-value="split">Split</button>
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label>
+          <input type="checkbox" id="rememberPosition" checked />
+          Remember reading position
+        </label>
+      </div>
+      
+      <div class="input-group">
+        <label>
+          <input type="checkbox" id="confirmDelete" checked />
+          Confirm before removing books
+        </label>
+      </div>
+    </div>
+    
+    <!-- Reading Settings -->
+    <div class="settings-panel" id="settings-reading">
+      <div class="input-group">
+        <label for="fontSizeSlider">Font Size: <span id="fontSizeValue">100</span>%</label>
+        <input type="range" id="fontSizeSlider" min="80" max="150" value="100" />
+      </div>
+      
+      <div class="input-group">
+        <label for="lineHeightSlider">Line Height: <span id="lineHeightValue">1.6</span></label>
+        <input type="range" id="lineHeightSlider" min="12" max="24" value="16" step="1" />
+      </div>
+      
+      <div class="input-group">
+        <label for="marginSlider">Margins: <span id="marginValue">50</span>px</label>
+        <input type="range" id="marginSlider" min="20" max="100" value="50" />
+      </div>
+      
+      <div class="input-group">
+        <label for="fontFamily">Font Family</label>
+        <select id="fontFamily">
+          <option value="default">Default</option>
+          <option value="Georgia, serif">Georgia</option>
+          <option value="'Times New Roman', serif">Times New Roman</option>
+          <option value="'Palatino Linotype', serif">Palatino</option>
+          <option value="Arial, sans-serif">Arial</option>
+          <option value="'Open Sans', sans-serif">Open Sans</option>
+          <option value="'OpenDyslexic', sans-serif">OpenDyslexic</option>
+        </select>
+      </div>
+    </div>
+    
+    <!-- Voice Settings -->
+    <div class="settings-panel" id="settings-voice">
+      <div class="input-group">
+        <label for="apiKey">OpenAI API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-..." />
+        <small class="input-hint">Required for text-to-speech features</small>
+      </div>
+      
+      <div class="input-group">
+        <label for="voiceSelect">Voice</label>
+        <select id="voiceSelect">
+          <option value="alloy">Alloy</option>
+          <option value="ash">Ash</option>
+          <option value="ballad">Ballad</option>
+          <option value="coral">Coral</option>
+          <option value="echo">Echo</option>
+          <option value="fable">Fable</option>
+          <option value="nova">Nova</option>
+          <option value="onyx">Onyx</option>
+          <option value="sage">Sage</option>
+          <option value="shimmer">Shimmer</option>
+          <option value="verse">Verse</option>
+        </select>
+      </div>
+      
+      <div class="input-group">
+        <label for="speechSpeed">Speech Speed: <span id="speechSpeedValue">1.0</span>x</label>
+        <input type="range" id="speechSpeed" min="0.5" max="2" value="1" step="0.1" />
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button id="save-settings-btn"><i class="fas fa-check"></i> Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT BOOK MODAL -->
+<div id="edit-book-modal" class="modal" style="display:none;">
+  <div class="modal-content edit-book-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-edit"></i> Edit Book Details</h3>
+    
+    <div class="edit-book-cover-preview" id="editBookCoverPreview"></div>
+    
+    <div class="input-group">
+      <label for="editBookTitle">Title</label>
+      <input type="text" id="editBookTitle" placeholder="Book title..." />
+    </div>
+    
+    <div class="input-group">
+      <label for="editBookAuthor">Author</label>
+      <input type="text" id="editBookAuthor" placeholder="Author name..." />
+    </div>
+    
+    <div class="modal-footer">
+      <button id="cancel-edit-btn" class="btn-secondary">Cancel</button>
+      <button id="save-edit-btn"><i class="fas fa-check"></i> Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- TAG EDITOR MODAL -->
+<div id="tag-modal" class="modal" style="display:none;">
+  <div class="modal-content tag-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-tags"></i> Manage Tags</h3>
+    
+    <div class="current-tags" id="currentTags">
+      <!-- Tags will be rendered here -->
+    </div>
+    
+    <div class="add-tag-section">
+      <div class="tag-color-picker">
+        <button class="tag-color" data-color="#5ba4e6" style="background: #5ba4e6;"></button>
+        <button class="tag-color" data-color="#48bb78" style="background: #48bb78;"></button>
+        <button class="tag-color" data-color="#ed8936" style="background: #ed8936;"></button>
+        <button class="tag-color" data-color="#e53e3e" style="background: #e53e3e;"></button>
+        <button class="tag-color" data-color="#9f7aea" style="background: #9f7aea;"></button>
+        <button class="tag-color" data-color="#ed64a6" style="background: #ed64a6;"></button>
+        <button class="tag-color" data-color="#38b2ac" style="background: #38b2ac;"></button>
+        <button class="tag-color" data-color="#ecc94b" style="background: #ecc94b;"></button>
+      </div>
+      <div class="tag-input-row">
+        <input type="text" id="newTagName" placeholder="New tag name..." />
+        <button id="addTagBtn"><i class="fas fa-plus"></i></button>
+      </div>
+    </div>
+    
+    <div class="modal-footer">
+      <button id="save-tags-btn"><i class="fas fa-check"></i> Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- SEARCH MODAL -->
+<div id="search-modal" class="modal" style="display:none;">
+  <div class="modal-content search-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-search"></i> Search in Book</h3>
+    
+    <div class="search-input-wrapper">
+      <input type="text" id="searchInput" placeholder="Enter search term..." autofocus />
+      <button id="searchBtn"><i class="fas fa-search"></i></button>
+    </div>
+    
+    <div class="search-results" id="searchResults">
+      <p class="search-placeholder">Enter a search term to find text in this book</p>
+    </div>
+    
+    <div class="search-nav" id="searchNav" style="display:none;">
+      <span id="searchResultCount">0 results</span>
+      <div class="search-nav-buttons">
+        <button id="searchPrevBtn" title="Previous"><i class="fas fa-chevron-up"></i></button>
+        <button id="searchNextBtn" title="Next"><i class="fas fa-chevron-down"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BOOKMARKS MODAL -->
+<div id="bookmarks-modal" class="modal" style="display:none;">
+  <div class="modal-content bookmarks-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-bookmark"></i> Bookmarks</h3>
+    
+    <div class="add-bookmark-section">
+      <input type="text" id="bookmarkName" placeholder="Bookmark name (optional)..." />
+      <button id="addBookmarkBtn"><i class="fas fa-plus"></i> Add Bookmark</button>
+    </div>
+    
+    <div class="bookmarks-list" id="bookmarksList">
+      <p class="bookmarks-placeholder">No bookmarks yet. Add one to save your place!</p>
+    </div>
+  </div>
+</div>
+
+<!-- HIGHLIGHTS MODAL -->
+<div id="highlights-modal" class="modal" style="display:none;">
+  <div class="modal-content highlights-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-highlighter"></i> Highlights & Notes</h3>
+    
+    <div class="highlights-list" id="highlightsList">
+      <p class="highlights-placeholder">No highlights yet. Select text while reading to highlight it!</p>
+    </div>
+  </div>
+</div>
+
+<!-- HIGHLIGHT TOOLTIP (appears on text selection) -->
+<div id="highlight-tooltip" class="highlight-tooltip" style="display:none;">
+  <button class="highlight-color" data-color="#ffeb3b" style="background: #ffeb3b;" title="Yellow"></button>
+  <button class="highlight-color" data-color="#4caf50" style="background: #4caf50;" title="Green"></button>
+  <button class="highlight-color" data-color="#2196f3" style="background: #2196f3;" title="Blue"></button>
+  <button class="highlight-color" data-color="#f44336" style="background: #f44336;" title="Red"></button>
+  <button class="highlight-color" data-color="#9c27b0" style="background: #9c27b0;" title="Purple"></button>
+  <div class="highlight-divider"></div>
+  <button class="highlight-action" id="addNoteBtn" title="Add Note"><i class="fas fa-sticky-note"></i></button>
+  <button class="highlight-action" id="copyTextBtn" title="Copy Text"><i class="fas fa-copy"></i></button>
+</div>
+
+<!-- NOTE INPUT MODAL -->
+<div id="note-modal" class="modal" style="display:none;">
+  <div class="modal-content note-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-sticky-note"></i> Add Note</h3>
+    
+    <div class="note-preview" id="notePreviewText"></div>
+    
+    <div class="input-group">
+      <label for="noteTextarea">Your Note</label>
+      <textarea id="noteTextarea" rows="4" placeholder="Write your note here..."></textarea>
+    </div>
+    
+    <div class="note-color-picker">
+      <button class="note-color selected" data-color="#ffeb3b" style="background: #ffeb3b;"></button>
+      <button class="note-color" data-color="#4caf50" style="background: #4caf50;"></button>
+      <button class="note-color" data-color="#2196f3" style="background: #2196f3;"></button>
+      <button class="note-color" data-color="#f44336" style="background: #f44336;"></button>
+      <button class="note-color" data-color="#9c27b0" style="background: #9c27b0;"></button>
+    </div>
+    
+    <div class="modal-footer">
+      <button id="cancel-note-btn" class="btn-secondary">Cancel</button>
+      <button id="save-note-btn"><i class="fas fa-check"></i> Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- RECORDING MODAL -->
+<div id="record-modal" class="modal" style="display:none;">
+  <div class="modal-content record-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-microphone"></i> Record Audiobook</h3>
+    
+    <div class="record-info">
+      <p>Convert your EPUB to MP3 files using OpenAI's TTS. Each chapter will be saved as a separate MP3 file.</p>
+    </div>
+    
+    <div class="record-book-info" id="recordBookInfo">
+      <div class="record-book-title" id="recordBookTitle">No book selected</div>
+      <div class="record-book-chapters" id="recordBookChapters">0 chapters</div>
+      <div class="record-current-chapter" id="recordCurrentChapterInfo">
+        <i class="fas fa-bookmark"></i>
+        <span>Current: <strong id="currentChapterName">Unknown</strong></span>
+      </div>
+    </div>
+    
+    <div class="record-options">
+      <div class="input-group">
+        <label for="recordVoiceSelect">Voice</label>
+        <select id="recordVoiceSelect">
+          <option value="alloy">Alloy</option>
+          <option value="ash">Ash</option>
+          <option value="coral">Coral</option>
+          <option value="echo">Echo</option>
+          <option value="fable">Fable</option>
+          <option value="onyx">Onyx</option>
+          <option value="nova">Nova</option>
+          <option value="sage">Sage</option>
+          <option value="shimmer">Shimmer</option>
+        </select>
+      </div>
+      
+      <div class="input-group">
+        <label>
+          <input type="checkbox" id="recordSingleChapter" />
+          Record current chapter only
+        </label>
+      </div>
+    </div>
+    
+    <div class="record-progress" id="recordProgress" style="display:none;">
+      <div class="progress-header">
+        <span id="recordProgressText">Preparing...</span>
+        <span id="recordProgressPercent">0%</span>
+      </div>
+      <div class="progress-bar-container">
+        <div class="progress-bar-fill" id="recordProgressBar"></div>
+      </div>
+      <div class="progress-chapter" id="recordCurrentChapter">Chapter 1 of 10</div>
+    </div>
+    
+    <div class="modal-footer">
+      <button id="cancel-record-btn" class="btn-secondary">Cancel</button>
+      <button id="start-record-btn"><i class="fas fa-circle"></i> Start Recording</button>
+    </div>
+  </div>
+</div>
+
+<!-- LIBRARY PAGE -->
+<div id="library-page">
+  <div class="lib-header">
+    <h2>My Library</h2>
+    <div class="lib-actions">
+      <button id="add-book-btn"><i class="fas fa-plus"></i> Import</button>
+      <button id="settings-btn-lib"><i class="fas fa-cog"></i></button>
+    </div>
+    <input type="file" id="fileInput" accept=".epub,.pdf" style="display:none" multiple />
+  </div>
+  
+  <div class="library-scroll-area">
+    <!-- Recently Read Section -->
+    <div id="recently-read-section" class="recently-read-section" style="display:none;">
+      <h3><i class="fas fa-clock"></i> Continue Reading</h3>
+      <div id="recently-read-scroll" class="recently-read-scroll">
+        <!-- Recently read books will be injected here -->
+      </div>
+    </div>
+    
+    <!-- Library Section Header -->
+    <div class="library-section-header">
+      <h3><i class="fas fa-folder"></i> All Books</h3>
+    </div>
+    
+    <!-- Sort & Filter Bar -->
+    <div class="library-toolbar">
+      <div class="filter-tags" id="filterTags">
+        <button class="filter-tag active" data-filter="all">All</button>
+        <!-- Dynamic tag filters will be added here -->
+      </div>
+      <div class="sort-options" id="sortOptions">
+        <button class="sort-dropdown-btn" id="sortDropdownBtn">
+          <i class="fas fa-sort"></i>
+          <span id="sortLabel">Recently Added</span>
+          <i class="fas fa-chevron-down chevron"></i>
+        </button>
+        <div class="sort-dropdown-menu" id="sortDropdownMenu">
+          <button data-sort="recent" class="active"><i class="fas fa-clock"></i> Recently Added</button>
+          <button data-sort="title"><i class="fas fa-sort-alpha-down"></i> Title A-Z</button>
+          <button data-sort="title-desc"><i class="fas fa-sort-alpha-up"></i> Title Z-A</button>
+          <button data-sort="author"><i class="fas fa-user"></i> Author A-Z</button>
+          <button data-sort="lastRead"><i class="fas fa-book-reader"></i> Last Read</button>
+        </div>
+      </div>
+    </div>
+    
+    <div id="library-grid">
+      <!-- Books will be injected here -->
+      <p class="empty-msg">No books yet. Import EPUB or PDF files to get started.</p>
+    </div>
+  </div>
+</div>
+
+<!-- READER PAGE -->
+<div id="reader-page" style="display:none;">
+  <div id="reader-layout">
+    <div id="sidebar">
+      <div class="sidebar-header">
+        <i class="fas fa-list"></i>
+        <h3>Contents</h3>
+      </div>
+      <div class="toc-section" id="toc-1">
+        <h4 class="toc-label">Book 1</h4>
+        <ul id="chapters"></ul>
+        <div id="pdf-pages-1" class="pdf-pages" style="display:none;"></div>
+      </div>
+      <div class="toc-section hidden" id="toc-2">
+        <h4 class="toc-label">Book 2</h4>
+        <button id="load-book-2-btn" class="small-btn"><i class="fas fa-book"></i> Select Book</button>
+        <ul id="chapters-2"></ul>
+        <div id="pdf-pages-2" class="pdf-pages" style="display:none;"></div>
+      </div>
+    </div>
+
+    <div id="viewers-container">
+      <div id="viewer-wrapper-1" class="viewer-wrapper">
+        <button id="prev-btn-1" class="page-btn prev-btn" title="Previous Page"><i class="fas fa-chevron-left"></i></button>
+        <div id="viewer" class="epub-viewer"></div>
+        <canvas id="pdf-viewer-1" class="pdf-canvas" style="display:none;"></canvas>
+        <button id="next-btn-1" class="page-btn next-btn" title="Next Page"><i class="fas fa-chevron-right"></i></button>
+      </div>
+      
+      <div id="viewer-wrapper-2" class="viewer-wrapper hidden">
+        <button id="prev-btn-2" class="page-btn prev-btn" title="Previous Page"><i class="fas fa-chevron-left"></i></button>
+        <div id="viewer-2" class="epub-viewer">
+          <div id="viewer-2-placeholder" class="viewer-placeholder">
+            <p>Secondary View</p>
+            <button id="viewer-2-select-btn">Select Book</button>
+          </div>
+        </div>
+        <canvas id="pdf-viewer-2" class="pdf-canvas" style="display:none;"></canvas>
+        <button id="next-btn-2" class="page-btn next-btn" title="Next Page"><i class="fas fa-chevron-right"></i></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div class="controls-center">
+      <button id="nav-lib-btn-bottom" class="nav-btn" title="Library">
+        <i class="fas fa-book"></i>
+        <span>Library</span>
+      </button>
+      <button id="sidebar-toggle-bottom" class="nav-btn" title="Contents">
+        <i class="fas fa-list"></i>
+        <span>Contents</span>
+      </button>
+      
+      <button id="search-btn-bottom" class="nav-btn" title="Search">
+        <i class="fas fa-search"></i>
+        <span>Search</span>
+      </button>
+      
+      <button id="bookmark-btn-bottom" class="nav-btn" title="Bookmarks">
+        <i class="fas fa-bookmark"></i>
+        <span>Bookmarks</span>
+      </button>
+      
+      <button id="highlights-btn-bottom" class="nav-btn" title="Highlights">
+        <i class="fas fa-highlighter"></i>
+        <span>Highlights</span>
+      </button>
+      
+      <div class="voice-controls" id="voice-controls-wrapper">
+        <button id="voiceMenuBtn" class="voice-menu-btn" title="Voice Options (EPUB only)">
+          <i class="fas fa-headphones"></i>
+        </button>
+        <div class="voice-popup" id="voicePopup">
+          <button id="speakBtn" class="voice-option play-btn" title="Play TTS">
+            <i class="fas fa-play"></i>
+          </button>
+          <button id="recordBtn" class="voice-option record-btn" title="Record to MP3">
+            <div class="record-icon"></div>
+          </button>
+        </div>
+      </div>
+      
+      <button id="toggle-split-btn-bottom" class="nav-btn" title="Split View">
+        <i class="fas fa-columns"></i>
+        <span>Split</span>
+      </button>
+      <button id="settings-btn-bottom" class="nav-btn" title="Settings">
+        <i class="fas fa-cog"></i>
+        <span>Settings</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- PDF.js Worker Setup -->
+<script type="module">
+  import * as pdfjsLib from '../node_modules/pdfjs-dist/build/pdf.min.mjs';
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '../node_modules/pdfjs-dist/build/pdf.worker.min.mjs';
+  window.pdfjsLib = pdfjsLib;
+</script>
+
+<script src="app.js"></script>
+
+</body>
+</html>
