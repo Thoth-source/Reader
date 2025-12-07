@@ -125,6 +125,14 @@
           <option value="'OpenDyslexic', sans-serif">OpenDyslexic</option>
         </select>
       </div>
+      
+      <div class="input-group">
+        <label for="pdfViewMode">PDF View Mode</label>
+        <select id="pdfViewMode">
+          <option value="paged">Paged (flip through pages)</option>
+          <option value="scroll">Scroll (continuous scroll with zoom)</option>
+        </select>
+      </div>
     </div>
     
     <!-- Voice Settings -->
@@ -316,6 +324,28 @@
   </div>
 </div>
 
+<!-- TTS CHAPTER SELECTION MODAL -->
+<div id="tts-modal" class="modal" style="display:none;">
+  <div class="modal-content tts-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-headphones"></i> Read Aloud</h3>
+    
+    <div class="input-group">
+      <label for="ttsChapterSelect">Select Chapter</label>
+      <select id="ttsChapterSelect">
+        <option value="current">Current Chapter</option>
+      </select>
+    </div>
+    
+    <p class="tts-hint">Or select text in the book and click Play to read only that selection.</p>
+    
+    <div class="modal-footer">
+      <button id="cancel-tts-btn" class="btn-secondary">Cancel</button>
+      <button id="start-tts-btn"><i class="fas fa-play"></i> Start Reading</button>
+    </div>
+  </div>
+</div>
+
 <!-- RECORDING MODAL -->
 <div id="record-modal" class="modal" style="display:none;">
   <div class="modal-content record-modal-content">
@@ -352,10 +382,11 @@
       </div>
       
       <div class="input-group">
-        <label>
-          <input type="checkbox" id="recordSingleChapter" />
-          Record current chapter only
-        </label>
+        <label for="recordChapterSelect">Chapter to Record</label>
+        <select id="recordChapterSelect">
+          <option value="current">Current Chapter</option>
+          <option value="all">All Chapters</option>
+        </select>
       </div>
     </div>
     
@@ -457,6 +488,15 @@
         <button id="prev-btn-1" class="page-btn prev-btn" title="Previous Page"><i class="fas fa-chevron-left"></i></button>
         <div id="viewer" class="epub-viewer"></div>
         <canvas id="pdf-viewer-1" class="pdf-canvas" style="display:none;"></canvas>
+        <div id="pdf-scroll-1" class="pdf-scroll-container" style="display:none;">
+          <div class="pdf-scroll-content" id="pdf-scroll-content-1"></div>
+        </div>
+        <div id="pdf-zoom-controls-1" class="pdf-zoom-controls" style="display:none;">
+          <button class="zoom-btn" id="zoom-out-1" title="Zoom Out"><i class="fas fa-minus"></i></button>
+          <span class="zoom-level" id="zoom-level-1">100%</span>
+          <button class="zoom-btn" id="zoom-in-1" title="Zoom In"><i class="fas fa-plus"></i></button>
+          <button class="zoom-btn" id="zoom-fit-1" title="Fit to Width"><i class="fas fa-arrows-alt-h"></i></button>
+        </div>
         <button id="next-btn-1" class="page-btn next-btn" title="Next Page"><i class="fas fa-chevron-right"></i></button>
       </div>
       
@@ -469,6 +509,15 @@
           </div>
         </div>
         <canvas id="pdf-viewer-2" class="pdf-canvas" style="display:none;"></canvas>
+        <div id="pdf-scroll-2" class="pdf-scroll-container" style="display:none;">
+          <div class="pdf-scroll-content" id="pdf-scroll-content-2"></div>
+        </div>
+        <div id="pdf-zoom-controls-2" class="pdf-zoom-controls" style="display:none;">
+          <button class="zoom-btn" id="zoom-out-2" title="Zoom Out"><i class="fas fa-minus"></i></button>
+          <span class="zoom-level" id="zoom-level-2">100%</span>
+          <button class="zoom-btn" id="zoom-in-2" title="Zoom In"><i class="fas fa-plus"></i></button>
+          <button class="zoom-btn" id="zoom-fit-2" title="Fit to Width"><i class="fas fa-arrows-alt-h"></i></button>
+        </div>
         <button id="next-btn-2" class="page-btn next-btn" title="Next Page"><i class="fas fa-chevron-right"></i></button>
       </div>
     </div>
@@ -507,6 +556,9 @@
         <div class="voice-popup" id="voicePopup">
           <button id="speakBtn" class="voice-option play-btn" title="Play TTS">
             <i class="fas fa-play"></i>
+          </button>
+          <button id="stopTTSBtn" class="voice-option stop-btn" title="Stop TTS (double-click speak button)">
+            <i class="fas fa-stop"></i>
           </button>
           <button id="recordBtn" class="voice-option record-btn" title="Record to MP3">
             <div class="record-icon"></div>

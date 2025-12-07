@@ -1,4 +1,4 @@
-console.log("App.js loaded");
+// App initialized
 
 // -------------------------------------------------------
 // LOADING SCREEN
@@ -43,8 +43,16 @@ let pdfPage1 = 1, pdfPage2 = 1; // Current PDF pages
 let pdfTotalPages1 = 0, pdfTotalPages2 = 0;
 let viewerType1 = null; // 'epub' or 'pdf'
 let viewerType2 = null;
+let pdfZoom1 = 1.0, pdfZoom2 = 1.0; // Zoom levels for scroll mode
+let pdfViewMode = 'paged'; // 'paged' or 'scroll'
+let hasAppliedDefaultView = false; // Track if default view was already applied this session
 let isPlaying = false;
+let isPaused = false;
+let isAborted = false;
 let currentAudio = null;
+let ttsChunks = [];
+let currentChunkIndex = 0;
+let ttsAbortController = null;
 let targetSlot = 1;
 let focusedSlot = 1;
 let currentFilter = 'all';
@@ -77,6 +85,12 @@ const viewer1El = document.getElementById("viewer");
 const viewer2El = document.getElementById("viewer-2");
 const pdfCanvas1 = document.getElementById("pdf-viewer-1");
 const pdfCanvas2 = document.getElementById("pdf-viewer-2");
+const pdfScroll1 = document.getElementById("pdf-scroll-1");
+const pdfScroll2 = document.getElementById("pdf-scroll-2");
+const pdfScrollContent1 = document.getElementById("pdf-scroll-content-1");
+const pdfScrollContent2 = document.getElementById("pdf-scroll-content-2");
+const pdfZoomControls1 = document.getElementById("pdf-zoom-controls-1");
+const pdfZoomControls2 = document.getElementById("pdf-zoom-controls-2");
 const viewerWrapper1 = document.getElementById("viewer-wrapper-1");
 const viewerWrapper2 = document.getElementById("viewer-wrapper-2");
 const sidebar = document.getElementById("sidebar");
@@ -131,6 +145,11 @@ const sortLabel = document.getElementById("sortLabel");
 
 // TTS Elements
 const speakBtn = document.getElementById("speakBtn");
+const stopTTSBtn = document.getElementById("stopTTSBtn");
+const ttsModal = document.getElementById("tts-modal");
+const ttsChapterSelect = document.getElementById("ttsChapterSelect");
+const startTTSBtn = document.getElementById("start-tts-btn");
+const cancelTTSBtn = document.getElementById("cancel-tts-btn");
 
 // -------------------------------------------------------
 // SETTINGS MODAL WITH TABS
@@ -175,7 +194,41 @@ function loadSettingsValues() {
   const margin = localStorage.getItem("reader_margin") || "50";
   document.getElementById("marginSlider").value = margin;
   document.getElementById("marginValue").textContent = margin;
+  
+  // Load theme
+  const savedTheme = localStorage.getItem("app_theme") || "light";
+  const themeSelect = document.getElementById("themeSelect");
+  if (themeSelect) {
+    themeSelect.value = savedTheme;
+    applyTheme(savedTheme);
+  }
+  
+  // Load PDF view mode
+  const savedPdfMode = localStorage.getItem("pdf_view_mode") || "paged";
+  const pdfViewModeSelect = document.getElementById("pdfViewMode");
+  if (pdfViewModeSelect) {
+    pdfViewModeSelect.value = savedPdfMode;
+  }
+  pdfViewMode = savedPdfMode;
+  
+  // Load default view mode
+  const savedDefaultView = localStorage.getItem("default_view") || "single";
+  const toggleBtns = document.querySelectorAll(".toggle-group .toggle-btn");
+  toggleBtns.forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.value === savedDefaultView);
+  });
 }
+
+// Default View toggle buttons
+document.querySelectorAll(".toggle-group .toggle-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    // Update active state
+    document.querySelectorAll(".toggle-group .toggle-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    // Save preference
+    localStorage.setItem("default_view", btn.dataset.value);
+  });
+});
 
 // Settings sliders live update
 document.getElementById("fontSizeSlider")?.addEventListener("input", (e) => {
@@ -201,9 +254,118 @@ document.getElementById("save-settings-btn")?.addEventListener("click", () => {
   localStorage.setItem("reader_line_height", document.getElementById("lineHeightSlider").value);
   localStorage.setItem("reader_margin", document.getElementById("marginSlider").value);
   
+  // Save theme
+  const theme = document.getElementById("themeSelect").value;
+  localStorage.setItem("app_theme", theme);
+  applyTheme(theme);
+  
+  // Save PDF view mode
+  const newPdfViewMode = document.getElementById("pdfViewMode").value;
+  const pdfModeChanged = newPdfViewMode !== pdfViewMode;
+  localStorage.setItem("pdf_view_mode", newPdfViewMode);
+  pdfViewMode = newPdfViewMode;
+  
   applyReaderSettings();
   settingsModal.style.display = "none";
+  
+  // If PDF view mode changed and a PDF is open, show notice
+  if (pdfModeChanged && (viewerType1 === 'pdf' || viewerType2 === 'pdf')) {
+    alert("PDF view mode changed. Please reopen the PDF to apply the new view mode.");
+  }
 });
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  // Update EPUB themes if books are loaded
+  updateEPUBThemes();
+}
+
+function getThemeColors() {
+  const theme = localStorage.getItem("app_theme") || "light";
+  const styles = getComputedStyle(document.documentElement);
+  
+  if (theme === "dark") {
+    return {
+      accent: "#60a5fa",
+      bg: "#1e293b",
+      text: "#f1f5f9"
+    };
+  } else if (theme === "sepia") {
+    return {
+      accent: "#8b6914",
+      bg: "#f4e8d7",
+      text: "#3d2817"
+    };
+  } else {
+    return {
+      accent: "#5ba4e6",
+      bg: "#ffffff",
+      text: "#2d3748"
+    };
+  }
+}
+
+function updateEPUBThemes() {
+  const colors = getThemeColors();
+  
+  if (rendition1) {
+    rendition1.themes.default({
+      'body': {
+        'background': `${colors.bg} !important`,
+        'color': `${colors.text} !important`
+      },
+      'a': {
+        'color': 'inherit !important',
+        'text-decoration': 'none !important'
+      },
+      'a sup, a sub, sup a, sub a': {
+        'color': `${colors.accent} !important`,
+        'text-decoration': 'none !important'
+      },
+      'a[href*="note"], a[href*="fn"], a[href*="endnote"], a[epub\\:type="noteref"], a.noteref, a.footnote': {
+        'color': `${colors.accent} !important`,
+        'text-decoration': 'none !important',
+        'font-size': '0.85em',
+        'vertical-align': 'super'
+      },
+      'sup, sub': {
+        'font-size': '0.75em'
+      },
+      'sup a, sub a, a sup, a sub': {
+        'color': `${colors.accent} !important`
+      }
+    });
+  }
+  
+  if (rendition2) {
+    rendition2.themes.default({
+      'body': {
+        'background': `${colors.bg} !important`,
+        'color': `${colors.text} !important`
+      },
+      'a': {
+        'color': 'inherit !important',
+        'text-decoration': 'none !important'
+      },
+      'a sup, a sub, sup a, sub a': {
+        'color': `${colors.accent} !important`,
+        'text-decoration': 'none !important'
+      },
+      'a[href*="note"], a[href*="fn"], a[href*="endnote"], a[epub\\:type="noteref"], a.noteref, a.footnote': {
+        'color': `${colors.accent} !important`,
+        'text-decoration': 'none !important',
+        'font-size': '0.85em',
+        'vertical-align': 'super'
+      },
+      'sup, sub': {
+        'font-size': '0.75em'
+      },
+      'sup a, sub a, a sup, a sub': {
+        'color': `${colors.accent} !important`
+      }
+    });
+  }
+}
 
 function applyReaderSettings() {
   const fontSize = localStorage.getItem("reader_font_size") || "100";
@@ -221,6 +383,20 @@ function applyReaderSettings() {
     rendition2.themes.fontSize(`${fontSize}%`);
   }
 }
+
+// Theme change handler (live update)
+document.getElementById("themeSelect")?.addEventListener("change", (e) => {
+  const theme = e.target.value;
+  applyTheme(theme);
+  localStorage.setItem("app_theme", theme);
+});
+
+// Apply theme on page load
+const savedTheme = localStorage.getItem("app_theme") || "light";
+applyTheme(savedTheme);
+
+// Initialize TTS button state
+updateTTSButtonState();
 
 // Note: Modal close handlers are defined at the end of the file
 
@@ -470,8 +646,20 @@ splitBtn?.addEventListener("click", () => {
     setTimeout(() => {
       if (rendition1) rendition1.resize();
       if (rendition2) rendition2.resize();
-      if (viewerType1 === 'pdf') renderPdfPage(1);
-      if (viewerType2 === 'pdf') renderPdfPage(2);
+      if (viewerType1 === 'pdf') {
+        if (pdfViewMode === 'scroll') {
+          recalculatePdfScrollMode(1);
+        } else {
+          renderPdfPage(1);
+        }
+      }
+      if (viewerType2 === 'pdf') {
+        if (pdfViewMode === 'scroll') {
+          recalculatePdfScrollMode(2);
+        } else {
+          renderPdfPage(2);
+        }
+      }
     }, 100);
   } else {
     viewerWrapper2.classList.add("hidden");
@@ -484,7 +672,13 @@ splitBtn?.addEventListener("click", () => {
     
     setTimeout(() => {
       if (rendition1) rendition1.resize();
-      if (viewerType1 === 'pdf') renderPdfPage(1);
+      if (viewerType1 === 'pdf') {
+        if (pdfViewMode === 'scroll') {
+          recalculatePdfScrollMode(1);
+        } else {
+          renderPdfPage(1);
+        }
+      }
     }, 100);
     
     focusedSlot = 1;
@@ -586,8 +780,15 @@ function getSavedPosition(bookPath) {
 
 function savePdfProgress(slot) {
   const bookPath = slot === 1 ? currentBookPath1 : currentBookPath2;
-  const pageNum = slot === 1 ? pdfPage1 : pdfPage2;
+  let pageNum = slot === 1 ? pdfPage1 : pdfPage2;
   const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+  
+  // In scroll mode, detect current page from scroll position
+  if (pdfViewMode === 'scroll') {
+    pageNum = getCurrentScrollPage(slot);
+    if (slot === 1) pdfPage1 = pageNum;
+    else pdfPage2 = pageNum;
+  }
   
   if (!bookPath) return;
   
@@ -601,6 +802,24 @@ function savePdfProgress(slot) {
   };
   
   window.electronAPI.addToLibrary(book);
+}
+
+function getCurrentScrollPage(slot) {
+  const scrollContainer = slot === 1 ? pdfScroll1 : pdfScroll2;
+  if (!scrollContainer) return 1;
+  
+  const pages = scrollContainer.querySelectorAll('.pdf-scroll-page');
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const containerMiddle = containerRect.top + containerRect.height / 2;
+  
+  for (const page of pages) {
+    const rect = page.getBoundingClientRect();
+    if (rect.top <= containerMiddle && rect.bottom >= containerMiddle) {
+      return parseInt(page.dataset.page) || 1;
+    }
+  }
+  
+  return 1;
 }
 
 // -------------------------------------------------------
@@ -826,26 +1045,68 @@ function renderRecentlyRead() {
   
   recentlyReadSection.style.display = "block";
   recentlyReadScroll.innerHTML = recent.map(book => {
+    const fileType = book.fileType || (book.path.toLowerCase().endsWith('.pdf') ? 'pdf' : 'epub');
     const coverStyle = book.cover 
-      ? `background-image: url('${book.cover}');`
+      ? `background-image: url('${book.cover}'); background-size: cover; background-position: center;`
       : `background: linear-gradient(135deg, #e8f4fc 0%, #d4e9f7 100%);`;
+    
+    // Progress bar
     const progress = book.readingProgress?.percentage || 0;
+    const progressBar = progress > 0 ? `
+      <div class="recent-book-progress-bar">
+        <div class="recent-book-progress-fill" style="width: ${progress}%"></div>
+      </div>
+      <div class="recent-book-progress-text">${progress}%</div>
+    ` : '';
     
     return `
       <div class="recent-book-card" data-path="${book.path}">
-        <div class="recent-book-cover" style="${coverStyle}">
-          ${progress > 0 ? `<div class="recent-progress-ring" style="--progress: ${progress}">
-            <span>${progress}%</span>
-          </div>` : ''}
+        <div class="recent-book-card-inner">
+          <div class="recent-book-cover" style="${coverStyle}">
+            <div class="recent-book-shine"></div>
+            <span class="file-type-badge ${fileType}">${fileType}</span>
+            ${!book.cover ? `<div class="book-cover-placeholder"><i class="fas fa-${fileType === 'pdf' ? 'file-pdf' : 'book'}"></i></div>` : ''}
+          </div>
+          <div class="recent-book-info">
+            <div class="recent-book-title">${book.title || "Unknown Title"}</div>
+            <div class="recent-book-author">${book.author || ""}</div>
+            ${progressBar}
+          </div>
         </div>
-        <div class="recent-book-title">${book.title || 'Unknown'}</div>
       </div>
     `;
   }).join('');
   
+  // Add 3D tilt effect to recent book cards
   recentlyReadScroll.querySelectorAll(".recent-book-card").forEach(card => {
-    card.addEventListener("click", () => {
-      openBookWithTransition(card.dataset.path, targetSlot);
+    const inner = card.querySelector(".recent-book-card-inner");
+    const shine = card.querySelector(".recent-book-shine");
+    
+    card.addEventListener("mousemove", (e) => {
+      const rect = card.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      
+      const rotateX = (y - centerY) / 8;
+      const rotateY = (centerX - x) / 8;
+      
+      inner.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.05)`;
+      
+      const shineX = (x / rect.width) * 100;
+      const shineY = (y / rect.height) * 100;
+      shine.style.background = `radial-gradient(circle at ${shineX}% ${shineY}%, rgba(255,255,255,0.4) 0%, transparent 60%)`;
+      shine.style.opacity = "1";
+    });
+    
+    card.addEventListener("mouseleave", () => {
+      inner.style.transform = "perspective(1000px) rotateX(0) rotateY(0) scale(1)";
+      shine.style.opacity = "0";
+    });
+    
+    card.addEventListener("click", async () => {
+      await openBookWithTransition(card.dataset.path, targetSlot);
       targetSlot = 1; // Reset after use
     });
   });
@@ -977,17 +1238,17 @@ function renderLibrary() {
       openTagModal(book.path);
     });
 
-    card.querySelector(".option-open-1").addEventListener("click", (e) => {
+    card.querySelector(".option-open-1").addEventListener("click", async (e) => {
       e.stopPropagation();
       optionsMenu.classList.remove("show");
-      openBookWithTransition(book.path, 1);
+      await openBookWithTransition(book.path, 1);
     });
     
-    card.querySelector(".option-open-2").addEventListener("click", (e) => {
+    card.querySelector(".option-open-2").addEventListener("click", async (e) => {
       e.stopPropagation();
       optionsMenu.classList.remove("show");
       if (viewerWrapper2.classList.contains("hidden")) splitBtn.click();
-      openBookWithTransition(book.path, 2);
+      await openBookWithTransition(book.path, 2);
     });
     
     card.querySelector(".option-edit").addEventListener("click", (e) => {
@@ -1012,11 +1273,11 @@ function renderLibrary() {
       }
     });
 
-    card.addEventListener("click", (e) => {
+    card.addEventListener("click", async (e) => {
       if (e.target.closest(".book-options-btn") || 
           e.target.closest(".book-options-menu") ||
           e.target.closest(".book-tag-btn")) return;
-      openBookWithTransition(book.path, targetSlot);
+      await openBookWithTransition(book.path, targetSlot);
       targetSlot = 1; // Reset after use
     });
 
@@ -1024,12 +1285,16 @@ function renderLibrary() {
   });
 }
 
-function openBookWithTransition(path, slot) {
+async function openBookWithTransition(path, slot) {
   const readerPage = document.getElementById("reader-page");
   readerPage.classList.add("page-entering");
   
-  openBook(path, slot);
-  updateLastRead(path);
+  try {
+    await openBook(path, slot);
+    await updateLastRead(path);
+  } catch (err) {
+    console.error("Error in openBookWithTransition:", err);
+  }
   
   setTimeout(() => {
     readerPage.classList.remove("page-entering");
@@ -1155,8 +1420,6 @@ function blobToDataUrl(blob) {
 // -------------------------------------------------------
 async function openBook(path, slot) {
   try {
-    console.log(`Opening book in slot ${slot}: ${path}`);
-    
     // Track which book is in which slot
     if (slot === 1) {
       currentBookPath1 = path;
@@ -1171,13 +1434,39 @@ async function openBook(path, slot) {
 
     const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
 
+    // Switch to reader view FIRST so viewer has proper dimensions
+    switchView("reader");
+    
+    // Apply default view setting ONLY on first book open in this session
+    try {
+      if (!hasAppliedDefaultView && slot === 1) {
+        hasAppliedDefaultView = true;
+        const defaultView = localStorage.getItem("default_view") || "single";
+        const currentlySplit = viewersContainer.classList.contains("split-mode");
+        
+        if (defaultView === "split" && !currentlySplit) {
+          // Open split view
+          viewerWrapper2?.classList.remove("hidden");
+          sidebar2?.classList.remove("hidden");
+          viewersContainer?.classList.add("split-mode");
+          splitBtn?.classList.add("active");
+          updateEPUBSpread();
+        }
+        // Don't close split view - only open it if that's the default
+      }
+    } catch (viewErr) {
+      console.error("Error applying default view:", viewErr);
+    }
+    
+    // Wait for view to be visible and layout to settle
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     if (isPDF) {
       await openPDF(arrayBuffer, slot, path);
     } else {
       await openEPUB(arrayBuffer, slot, path);
     }
-
-    switchView("reader");
+    
     applyReaderSettings();
   } catch (err) {
     console.error("Error opening book:", err);
@@ -1201,56 +1490,75 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     document.getElementById("pdf-pages-1").innerHTML = "";
     
     book1 = ePub(arrayBuffer);
+    
+    // Wait for book to be ready
+    await book1.ready;
+    
+    // Ensure viewer is visible and has dimensions
+    viewer1El.style.display = 'block';
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
     // Use dynamic spread: two pages when split view is closed, single page when open
     const spreadSetting = getSpreadSetting();
     rendition1 = book1.renderTo("viewer", { 
-      width: "100%", 
-      height: "100%", 
+      width: "100%",
+      height: "100%",
       flow: "paginated", 
       manager: "default",
       spread: spreadSetting
     });
     
-    // Apply custom styles for better footnote/link rendering
-    rendition1.themes.default({
-      'a': {
-        'color': 'inherit !important',
-        'text-decoration': 'none !important'
-      },
-      'a sup, a sub, sup a, sub a': {
-        'color': '#5ba4e6 !important',
-        'text-decoration': 'none !important'
-      },
-      'a[href*="note"], a[href*="fn"], a[href*="endnote"], a[epub\\:type="noteref"], a.noteref, a.footnote': {
-        'color': '#5ba4e6 !important',
-        'text-decoration': 'none !important',
-        'font-size': '0.85em',
-        'vertical-align': 'super'
-      },
-      'sup, sub': {
-        'font-size': '0.75em'
-      },
-      'sup a, sub a, a sup, a sub': {
-        'color': '#5ba4e6 !important'
-      }
-    });
+    // Apply theme-aware styles
+    updateEPUBThemes();
     
-    // Display from beginning first
-    await rendition1.display();
+    // Wait a bit for rendition to initialize
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Get the first spine item to ensure we display the cover
+    const spine = await book1.loaded.spine;
+    const firstItem = spine.items[0];
+    
+    // Display from beginning (cover) explicitly
+    if (firstItem) {
+      await rendition1.display(firstItem.href);
+    } else {
+      await rendition1.display();
+    }
+    
+    // Force resize immediately and multiple times to ensure content renders
+    if (rendition1) {
+      rendition1.resize();
+    }
+    
+    setTimeout(() => {
+      if (rendition1) {
+        rendition1.resize();
+        // Try again after a short delay
+        setTimeout(() => {
+          if (rendition1) {
+            rendition1.resize();
+          }
+        }, 150);
+      }
+    }, 100);
     
     loadTOC(book1, rendition1, "chapters");
     setupRenditionFocus(rendition1, 1);
     setupHighlightSelection(rendition1, 1);
     
-    // Restore saved position after initial render
+    // Restore saved position after initial render (only if not a new book)
     const savedCfi = getSavedPosition(bookPath);
     if (savedCfi) {
-      // Small delay to let the initial render complete
+      // Longer delay to let the cover render first
       setTimeout(() => {
         rendition1.display(savedCfi).catch(e => {
           console.warn("Could not restore position:", e);
         });
-      }, 300);
+        // Resize again after position restore
+        setTimeout(() => {
+          if (rendition1) rendition1.resize();
+        }, 100);
+      }, 500);
     }
     
     // Generate locations in background for progress tracking (non-blocking)
@@ -1281,6 +1589,14 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     document.getElementById("pdf-pages-2").innerHTML = "";
     
     book2 = ePub(arrayBuffer);
+    
+    // Wait for book to be ready
+    await book2.ready;
+    
+    // Ensure viewer is visible and has dimensions
+    viewer2El.style.display = 'block';
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
     // Use dynamic spread: two pages when split view is closed, single page when open
     const spreadSetting = getSpreadSetting();
     rendition2 = book2.renderTo("viewer-2", { 
@@ -1290,45 +1606,56 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
       spread: spreadSetting
     });
     
-    // Apply custom styles for better footnote/link rendering
-    rendition2.themes.default({
-      'a': {
-        'color': 'inherit !important',
-        'text-decoration': 'none !important'
-      },
-      'a sup, a sub, sup a, sub a': {
-        'color': '#5ba4e6 !important',
-        'text-decoration': 'none !important'
-      },
-      'a[href*="note"], a[href*="fn"], a[href*="endnote"], a[epub\\:type="noteref"], a.noteref, a.footnote': {
-        'color': '#5ba4e6 !important',
-        'text-decoration': 'none !important',
-        'font-size': '0.85em',
-        'vertical-align': 'super'
-      },
-      'sup, sub': {
-        'font-size': '0.75em'
-      },
-      'sup a, sub a, a sup, a sub': {
-        'color': '#5ba4e6 !important'
-      }
-    });
+    // Apply theme-aware styles
+    updateEPUBThemes();
     
-    // Display from beginning first
-    await rendition2.display();
+    // Wait a bit for rendition to initialize
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Get the first spine item to ensure we display the cover
+    const spine = await book2.loaded.spine;
+    const firstItem = spine.items[0];
+    
+    // Display from beginning (cover) explicitly
+    if (firstItem) {
+      await rendition2.display(firstItem.href);
+    } else {
+      await rendition2.display();
+    }
+    
+    // Force resize immediately and multiple times to ensure content renders
+    if (rendition2) {
+      rendition2.resize();
+    }
+    
+    setTimeout(() => {
+      if (rendition2) {
+        rendition2.resize();
+        // Try again after a short delay
+        setTimeout(() => {
+          if (rendition2) {
+            rendition2.resize();
+          }
+        }, 150);
+      }
+    }, 100);
     
     loadTOC(book2, rendition2, "chapters-2");
     setupRenditionFocus(rendition2, 2);
     
-    // Restore saved position after initial render
+    // Restore saved position after initial render (only if not a new book)
     const savedCfi2 = getSavedPosition(bookPath);
     if (savedCfi2) {
-      // Small delay to let the initial render complete
+      // Longer delay to let the cover render first
       setTimeout(() => {
         rendition2.display(savedCfi2).catch(e => {
           console.warn("Could not restore position:", e);
         });
-      }, 300);
+        // Resize again after position restore
+        setTimeout(() => {
+          if (rendition2) rendition2.resize();
+        }, 100);
+      }, 500);
     }
     
     // Generate locations in background for progress tracking (non-blocking)
@@ -1355,20 +1682,59 @@ async function openPDF(arrayBuffer, slot, bookPath) {
   const book = library.find(b => b.path === bookPath);
   const savedPage = book?.readingProgress?.page || 1;
   
+  // Get current PDF view mode from settings
+  pdfViewMode = localStorage.getItem('pdf_view_mode') || 'paged';
+  
   if (slot === 1) {
     if (book1) { book1.destroy(); book1 = null; rendition1 = null; }
     pdf1 = pdf;
     pdfPage1 = Math.min(savedPage, pdf.numPages);
     pdfTotalPages1 = pdf.numPages;
     viewerType1 = 'pdf';
+    pdfZoom1 = 1.0;
     
     viewer1El.style.display = 'none';
-    pdfCanvas1.style.display = 'block';
     document.getElementById("chapters").innerHTML = "";
     document.getElementById("chapters").style.display = "none";
     
-    loadPdfPageList(1);
-    await renderPdfPage(1);
+    // Re-query elements to ensure they exist (in case DOM changed)
+    const scroll1 = document.getElementById("pdf-scroll-1");
+    const scrollContent1 = document.getElementById("pdf-scroll-content-1");
+    
+    if (pdfViewMode === 'scroll' && scroll1 && scrollContent1) {
+      try {
+        pdfCanvas1.style.display = 'none';
+        scroll1.style.display = 'flex';
+        if (pdfZoomControls1) pdfZoomControls1.style.display = 'flex';
+        viewerWrapper1.classList.add('pdf-scroll-mode');
+        await renderPdfScrollMode(1);
+        // Scroll to saved page after a delay
+        setTimeout(() => scrollToPage(1, pdfPage1), 100);
+      } catch (scrollErr) {
+        console.error("Scroll mode failed, falling back to paged:", scrollErr);
+        // Fallback to paged mode
+        pdfCanvas1.style.display = 'block';
+        if (scroll1) scroll1.style.display = 'none';
+        if (pdfZoomControls1) pdfZoomControls1.style.display = 'none';
+        viewerWrapper1.classList.remove('pdf-scroll-mode');
+        loadPdfPageList(1);
+        await renderPdfPage(1);
+      }
+    } else {
+      // Cleanup scroll mode observers
+      if (pdfScrollObservers[1]) {
+        pdfScrollObservers[1].disconnect();
+        pdfScrollObservers[1] = null;
+      }
+      pdfRenderedPages[1].clear();
+      
+      pdfCanvas1.style.display = 'block';
+      if (scroll1) scroll1.style.display = 'none';
+      if (pdfZoomControls1) pdfZoomControls1.style.display = 'none';
+      viewerWrapper1.classList.remove('pdf-scroll-mode');
+      loadPdfPageList(1);
+      await renderPdfPage(1);
+    }
     
     // Update TTS availability (disabled for PDF)
     updateTTSAvailability();
@@ -1379,14 +1745,48 @@ async function openPDF(arrayBuffer, slot, bookPath) {
     pdfPage2 = Math.min(savedPage, pdf.numPages);
     pdfTotalPages2 = pdf.numPages;
     viewerType2 = 'pdf';
+    pdfZoom2 = 1.0;
     
     viewer2El.style.display = 'none';
-    pdfCanvas2.style.display = 'block';
     document.getElementById("chapters-2").innerHTML = "";
     document.getElementById("chapters-2").style.display = "none";
     
-    loadPdfPageList(2);
-    await renderPdfPage(2);
+    // Re-query elements to ensure they exist
+    const scroll2 = document.getElementById("pdf-scroll-2");
+    const scrollContent2 = document.getElementById("pdf-scroll-content-2");
+    
+    if (pdfViewMode === 'scroll' && scroll2 && scrollContent2) {
+      try {
+        pdfCanvas2.style.display = 'none';
+        scroll2.style.display = 'flex';
+        if (pdfZoomControls2) pdfZoomControls2.style.display = 'flex';
+        viewerWrapper2.classList.add('pdf-scroll-mode');
+        await renderPdfScrollMode(2);
+        setTimeout(() => scrollToPage(2, pdfPage2), 100);
+      } catch (scrollErr) {
+        console.error("Scroll mode failed (slot 2), falling back to paged:", scrollErr);
+        pdfCanvas2.style.display = 'block';
+        if (scroll2) scroll2.style.display = 'none';
+        if (pdfZoomControls2) pdfZoomControls2.style.display = 'none';
+        viewerWrapper2.classList.remove('pdf-scroll-mode');
+        loadPdfPageList(2);
+        await renderPdfPage(2);
+      }
+    } else {
+      // Cleanup scroll mode observers
+      if (pdfScrollObservers[2]) {
+        pdfScrollObservers[2].disconnect();
+        pdfScrollObservers[2] = null;
+      }
+      pdfRenderedPages[2].clear();
+      
+      pdfCanvas2.style.display = 'block';
+      if (scroll2) scroll2.style.display = 'none';
+      if (pdfZoomControls2) pdfZoomControls2.style.display = 'none';
+      viewerWrapper2.classList.remove('pdf-scroll-mode');
+      loadPdfPageList(2);
+      await renderPdfPage(2);
+    }
   }
 }
 
@@ -1428,14 +1828,20 @@ async function renderPdfPage(slot) {
     const scaleY = wrapperHeight / viewport1.height;
     const scale = Math.min(scaleX, scaleY, 1.5);
     
-    const scaledViewport = page1.getViewport({ scale });
+    // Account for device pixel ratio for crisp rendering
+    const pixelRatio = window.devicePixelRatio || 1;
+    const scaledViewport = page1.getViewport({ scale: scale * pixelRatio });
     const pageWidth = scaledViewport.width;
     const pageHeight = scaledViewport.height;
-    const gap = 10;
+    const gap = 10 * pixelRatio;
     
-    // Set canvas size for two pages
+    // Set canvas actual size (in pixels)
     canvas.width = pageWidth * 2 + gap;
     canvas.height = pageHeight;
+    
+    // Set canvas display size (CSS)
+    canvas.style.width = `${(pageWidth * 2 + gap) / pixelRatio}px`;
+    canvas.style.height = `${pageHeight / pixelRatio}px`;
     
     const context = canvas.getContext('2d');
     context.fillStyle = '#f0f0f0';
@@ -1451,7 +1857,7 @@ async function renderPdfPage(slot) {
     const rightPageNum = pageNum + 1;
     if (rightPageNum <= totalPages) {
       const page2 = await pdf.getPage(rightPageNum);
-      const viewport2 = page2.getViewport({ scale });
+      const viewport2 = page2.getViewport({ scale: scale * pixelRatio });
       
       // Offset for right page
       context.save();
@@ -1470,10 +1876,17 @@ async function renderPdfPage(slot) {
     const scaleY = wrapperHeight / viewport.height;
     const scale = Math.min(scaleX, scaleY, 2);
     
-    const scaledViewport = page.getViewport({ scale });
+    // Account for device pixel ratio for crisp rendering
+    const pixelRatio = window.devicePixelRatio || 1;
+    const scaledViewport = page.getViewport({ scale: scale * pixelRatio });
     
+    // Set canvas actual size (in pixels)
     canvas.width = scaledViewport.width;
     canvas.height = scaledViewport.height;
+    
+    // Set canvas display size (CSS)
+    canvas.style.width = `${scaledViewport.width / pixelRatio}px`;
+    canvas.style.height = `${scaledViewport.height / pixelRatio}px`;
     
     const context = canvas.getContext('2d');
     await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
@@ -1493,17 +1906,751 @@ function loadPdfPageList(slot) {
     item.className = "pdf-page-item";
     item.textContent = `Page ${i}`;
     item.addEventListener("click", () => {
-      if (slot === 1) {
-        pdfPage1 = i;
-        renderPdfPage(1);
+      if (pdfViewMode === 'scroll') {
+        scrollToPage(slot, i);
       } else {
-        pdfPage2 = i;
-        renderPdfPage(2);
+        if (slot === 1) {
+          pdfPage1 = i;
+          renderPdfPage(1);
+        } else {
+          pdfPage2 = i;
+          renderPdfPage(2);
+        }
       }
     });
     container.appendChild(item);
   }
 }
+
+// -------------------------------------------------------
+// PDF SCROLL MODE - Virtual Scrolling with Lazy Loading
+// -------------------------------------------------------
+// Store rendered pages cache and observers per slot
+const pdfScrollObservers = { 1: null, 2: null };
+const pdfRenderedPages = { 1: new Map(), 2: new Map() };
+
+async function renderPdfScrollMode(slot) {
+  const pdf = slot === 1 ? pdf1 : pdf2;
+  const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+  const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+  const scrollContainer = slot === 1 ? pdfScroll1 : pdfScroll2;
+  
+  // Validate inputs
+  if (!pdf || !scrollContent || !scrollContainer) {
+    console.error("PDF scroll mode: missing required elements", { pdf: !!pdf, scrollContent: !!scrollContent, scrollContainer: !!scrollContainer });
+    return;
+  }
+  
+  // Safety check for totalPages
+  if (!totalPages || totalPages <= 0 || totalPages > 5000 || isNaN(totalPages)) {
+    console.error("PDF scroll mode: invalid totalPages", totalPages);
+    return;
+  }
+  
+  // Clear previous content and show loading
+  scrollContent.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-secondary);">Initializing PDF viewer...</div>';
+  
+  // Wait for container to have dimensions
+  let containerWidth = scrollContainer.clientWidth - 60;
+  let attempts = 0;
+  while (containerWidth <= 0 && attempts < 10) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    containerWidth = scrollContainer.clientWidth - 60;
+    attempts++;
+  }
+  
+  // Fallback if still no width
+  if (containerWidth <= 0) {
+    const wrapper = scrollContainer.parentElement;
+    containerWidth = wrapper ? wrapper.clientWidth - 100 : 600;
+    console.warn("PDF scroll: using fallback width:", containerWidth);
+  }
+  
+  // Get first page to estimate page dimensions
+  const firstPage = await pdf.getPage(1);
+  const firstViewport = firstPage.getViewport({ scale: 1 });
+  const baseScale = Math.min(containerWidth / firstViewport.width, 2);
+  const scaledViewport = firstPage.getViewport({ scale: baseScale });
+  const estimatedPageHeight = scaledViewport.height;
+  const estimatedPageWidth = scaledViewport.width;
+  
+  // Clear loading message
+  scrollContent.innerHTML = '';
+  
+  // Reset zoom
+  scrollContent.style.transform = 'scale(1)';
+  scrollContent.style.transformOrigin = '0 0';
+  if (slot === 1) pdfZoom1 = 1.0;
+  else pdfZoom2 = 1.0;
+  
+  // Store container width, scale, and base dimensions for later use
+  scrollContent.dataset.containerWidth = containerWidth;
+  scrollContent.dataset.baseScale = baseScale;
+  
+  // CRITICAL: Store base PAGE dimensions for zoom calculations
+  scrollContent.dataset.basePageWidth = estimatedPageWidth.toString();
+  scrollContent.dataset.basePageHeight = estimatedPageHeight.toString();
+  
+  // Create placeholder structure for all pages
+  const gap = 20; // Gap between pages
+  const padding = 40; // Padding around content (20px each side)
+  
+  // Calculate and store base content dimensions (before any zoom)
+  const estimatedTotalHeight = (estimatedPageHeight + gap) * totalPages - gap + padding;
+  const totalWidth = estimatedPageWidth + padding;
+  scrollContent.dataset.baseContentWidth = totalWidth.toString();
+  scrollContent.dataset.baseContentHeight = estimatedTotalHeight.toString();
+  
+  // No need to set min-width/height - natural content size will be correct
+  scrollContent.style.transform = 'none';
+  
+  for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+    const pagePlaceholder = document.createElement('div');
+    pagePlaceholder.className = 'pdf-scroll-page-placeholder';
+    pagePlaceholder.dataset.pageNum = pageNum;
+    pagePlaceholder.dataset.rendered = 'false';
+    // Set explicit dimensions that won't change
+    pagePlaceholder.style.width = `${estimatedPageWidth}px`;
+    pagePlaceholder.style.height = `${estimatedPageHeight}px`;
+    pagePlaceholder.style.minHeight = `${estimatedPageHeight}px`;
+    pagePlaceholder.style.maxHeight = `${estimatedPageHeight}px`;
+    pagePlaceholder.style.margin = `0 auto ${gap}px`;
+    pagePlaceholder.style.position = 'relative';
+    pagePlaceholder.style.boxSizing = 'border-box';
+    
+    // Add loading indicator
+    const loadingDiv = document.createElement('div');
+    loadingDiv.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-muted); font-size: 12px;';
+    loadingDiv.textContent = `Page ${pageNum}`;
+    pagePlaceholder.appendChild(loadingDiv);
+    
+    scrollContent.appendChild(pagePlaceholder);
+  }
+  
+  // Disconnect old observer if exists
+  if (pdfScrollObservers[slot]) {
+    pdfScrollObservers[slot].disconnect();
+  }
+  
+  // Create Intersection Observer to detect visible pages
+  pdfScrollObservers[slot] = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const pageNum = parseInt(entry.target.dataset.pageNum);
+        if (entry.target.dataset.rendered !== 'true') {
+          renderPageIfNeeded(slot, pageNum);
+        }
+      }
+    });
+  }, {
+    root: scrollContainer,
+    rootMargin: '200px', // Render pages 200px before they enter viewport
+    threshold: 0.01
+  });
+  
+  // Observe all placeholders
+  scrollContent.querySelectorAll('.pdf-scroll-page-placeholder').forEach(placeholder => {
+    pdfScrollObservers[slot].observe(placeholder);
+  });
+  
+  // Render first few pages immediately (visible on load)
+  const initialPages = Math.min(5, totalPages);
+  for (let i = 1; i <= initialPages; i++) {
+    await renderPageIfNeeded(slot, i);
+  }
+  
+  // Update zoom level display
+  updateZoomDisplay(slot);
+  
+  // Load the page list for navigation
+  loadPdfPageList(slot);
+}
+
+async function renderPageIfNeeded(slot, pageNum) {
+  const pdf = slot === 1 ? pdf1 : pdf2;
+  const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+  const renderedPages = pdfRenderedPages[slot];
+  
+  // Check if already rendered or currently rendering
+  if (renderedPages.has(pageNum)) {
+    return;
+  }
+  
+  const placeholder = scrollContent.querySelector(`[data-page-num="${pageNum}"]`);
+  if (!placeholder || placeholder.dataset.rendered === 'true' || placeholder.dataset.rendered === 'rendering') {
+    return;
+  }
+  
+  try {
+    placeholder.dataset.rendered = 'rendering';
+    
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1 });
+    
+    // Get stored container width and scale
+    const containerWidth = parseFloat(scrollContent.dataset.containerWidth) || 600;
+    const baseScale = parseFloat(scrollContent.dataset.baseScale) || 1;
+    const scaledViewport = page.getViewport({ scale: baseScale });
+    
+    // Get actual rendered dimensions (should match placeholder)
+    const placeholderWidth = parseFloat(placeholder.style.width);
+    const placeholderHeight = parseFloat(placeholder.style.height);
+    
+    // Create canvas at the exact size we'll display
+    const canvas = document.createElement('canvas');
+    // Use device pixel ratio for crisp rendering
+    const pixelRatio = window.devicePixelRatio || 1;
+    canvas.width = scaledViewport.width * pixelRatio;
+    canvas.height = scaledViewport.height * pixelRatio;
+    
+    // Set display size to match placeholder exactly
+    canvas.style.display = 'block';
+    canvas.style.width = `${scaledViewport.width}px`;
+    canvas.style.height = `${scaledViewport.height}px`;
+    canvas.style.margin = '0';
+    
+    // Render page at high resolution
+    const context = canvas.getContext('2d');
+    context.scale(pixelRatio, pixelRatio);
+    await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
+    
+    // Update placeholder to match actual rendered size (in case page dimensions differ)
+    const actualWidth = scaledViewport.width;
+    const actualHeight = scaledViewport.height;
+    placeholder.style.width = `${actualWidth}px`;
+    placeholder.style.height = `${actualHeight}px`;
+    placeholder.style.minHeight = `${actualHeight}px`;
+    placeholder.style.maxHeight = `${actualHeight}px`;
+    
+    // Replace placeholder content with canvas
+    placeholder.innerHTML = '';
+    placeholder.appendChild(canvas);
+    placeholder.className = 'pdf-scroll-page';
+    placeholder.dataset.rendered = 'true';
+    placeholder.dataset.renderedAtZoom = '1'; // Initial render is at 1.0x zoom
+    
+    // Store in cache
+    renderedPages.set(pageNum, canvas);
+  } catch (err) {
+    console.error(`Error rendering page ${pageNum}:`, err);
+    placeholder.dataset.rendered = 'error';
+    const errorDiv = document.createElement('div');
+    errorDiv.style.cssText = 'padding: 20px; text-align: center; color: var(--text-muted);';
+    errorDiv.textContent = `Error loading page ${pageNum}`;
+    placeholder.innerHTML = '';
+    placeholder.appendChild(errorDiv);
+  }
+}
+
+function scrollToPage(slot, pageNum) {
+  const scrollContainer = slot === 1 ? pdfScroll1 : pdfScroll2;
+  const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+  
+  // Find placeholder or rendered page
+  const pageElement = scrollContent.querySelector(`[data-page-num="${pageNum}"]`);
+  
+  if (pageElement) {
+    pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Ensure page is rendered
+    renderPageIfNeeded(slot, pageNum);
+  }
+}
+
+// Recalculate PDF scroll mode when viewer size changes (e.g., split view)
+async function recalculatePdfScrollMode(slot) {
+  const pdf = slot === 1 ? pdf1 : pdf2;
+  const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+  const scrollContainer = slot === 1 ? pdfScroll1 : pdfScroll2;
+  
+  if (!pdf || !scrollContent || !scrollContainer) return;
+  
+  // Wait a bit for layout to settle after split view change
+  await new Promise(resolve => setTimeout(resolve, 150));
+  
+  // Get new container width (account for padding)
+  let containerWidth = scrollContainer.clientWidth - 60;
+  if (containerWidth <= 0) {
+    // Try again with a longer delay
+    await new Promise(resolve => setTimeout(resolve, 100));
+    containerWidth = scrollContainer.clientWidth - 60;
+  }
+  
+  if (containerWidth <= 0) {
+    // Fallback: use parent width
+    const wrapper = scrollContainer.parentElement;
+    containerWidth = wrapper ? wrapper.clientWidth - 100 : 600;
+    console.warn("Using fallback container width:", containerWidth);
+  }
+  
+  // Get first page to recalculate scale
+  const firstPage = await pdf.getPage(1);
+  const firstViewport = firstPage.getViewport({ scale: 1 });
+  const newBaseScale = Math.min(containerWidth / firstViewport.width, 2);
+  const scaledViewport = firstPage.getViewport({ scale: newBaseScale });
+  const newPageWidth = scaledViewport.width;
+  const newPageHeight = scaledViewport.height;
+  
+  // Store new dimensions
+  scrollContent.dataset.containerWidth = containerWidth;
+  scrollContent.dataset.baseScale = newBaseScale;
+  
+  // CRITICAL: Store base PAGE dimensions for zoom calculations
+  scrollContent.dataset.basePageWidth = newPageWidth.toString();
+  scrollContent.dataset.basePageHeight = newPageHeight.toString();
+  
+  // Update base content dimensions
+  const gap = 20;
+  const padding = 40;
+  const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+  const estimatedTotalHeight = (newPageHeight + gap) * totalPages - gap + padding;
+  const totalWidth = newPageWidth + padding;
+  scrollContent.dataset.baseContentWidth = totalWidth.toString();
+  scrollContent.dataset.baseContentHeight = estimatedTotalHeight.toString();
+  
+  // No CSS transform - use natural sizing
+  scrollContent.style.transform = 'none';
+  scrollContent.style.minWidth = '';
+  scrollContent.style.minHeight = '';
+  
+  // Get current zoom and scroll
+  const currentZoom = slot === 1 ? pdfZoom1 : pdfZoom2;
+  const currentScrollX = scrollContainer.scrollLeft;
+  const currentScrollY = scrollContainer.scrollTop;
+  
+  // Calculate scaled page dimensions
+  const scaledPageWidth = newPageWidth * currentZoom;
+  const scaledPageHeight = newPageHeight * currentZoom;
+  
+  // Update all placeholder dimensions to match current zoom
+  const placeholders = scrollContent.querySelectorAll('.pdf-scroll-page-placeholder, .pdf-scroll-page');
+  placeholders.forEach(placeholder => {
+    placeholder.style.width = `${scaledPageWidth}px`;
+    placeholder.style.height = `${scaledPageHeight}px`;
+    placeholder.style.minHeight = `${scaledPageHeight}px`;
+    placeholder.style.maxHeight = `${scaledPageHeight}px`;
+    
+    // Scale canvas if present
+    const canvas = placeholder.querySelector('canvas');
+    if (canvas) {
+      canvas.style.width = `${scaledPageWidth}px`;
+      canvas.style.height = `${scaledPageHeight}px`;
+    }
+  });
+  
+  // Re-render currently visible pages at new scale
+  const visiblePlaceholders = Array.from(placeholders).filter(p => {
+    const rect = p.getBoundingClientRect();
+    const containerRect = scrollContainer.getBoundingClientRect();
+    return rect.top < containerRect.bottom + 200 && rect.bottom > containerRect.top - 200;
+  });
+  
+  // Clear rendered cache for visible pages so they re-render at new resolution
+  const renderedPages = pdfRenderedPages[slot];
+  visiblePlaceholders.forEach(placeholder => {
+    const pageNum = parseInt(placeholder.dataset.pageNum);
+    if (pageNum) {
+      renderedPages.delete(pageNum);
+      placeholder.dataset.rendered = 'false';
+      placeholder.innerHTML = '';
+      const loadingDiv = document.createElement('div');
+      loadingDiv.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-muted); font-size: 12px;';
+      loadingDiv.textContent = `Page ${pageNum}`;
+      placeholder.className = 'pdf-scroll-page-placeholder';
+      // Dimensions already set above
+      placeholder.appendChild(loadingDiv);
+    }
+  });
+  
+  // Re-render visible pages
+  for (const placeholder of visiblePlaceholders) {
+    const pageNum = parseInt(placeholder.dataset.pageNum);
+    if (pageNum) {
+      await renderPageIfNeeded(slot, pageNum);
+    }
+  }
+  
+  // Adjust scroll position to keep same relative position
+  // Calculate new scroll to show approximately the same content
+  const newScrollY = (currentScrollY / currentZoom) * currentZoom;
+  scrollContainer.scrollTop = Math.max(0, newScrollY);
+}
+
+function updateZoomDisplay(slot) {
+  const zoom = slot === 1 ? pdfZoom1 : pdfZoom2;
+  const zoomLevelEl = document.getElementById(`zoom-level-${slot}`);
+  if (zoomLevelEl) {
+    zoomLevelEl.textContent = `${Math.round(zoom * 100)}%`;
+  }
+}
+
+// Throttle zoom with requestAnimationFrame for smoothness
+let zoomRAF = { 1: null, 2: null };
+let pendingZoom = { 1: null, 2: null };
+
+// Debounce timer for re-rendering after zoom ends
+let zoomEndTimer = { 1: null, 2: null };
+const ZOOM_RE_RENDER_DELAY = 300; // ms to wait after last zoom before re-rendering
+
+function setZoom(slot, newZoom, mouseX = null, mouseY = null) {
+  // Clamp zoom between 0.5 and 3
+  newZoom = Math.max(0.5, Math.min(3, newZoom));
+  
+  // CRITICAL: Ensure button clicks NEVER use mouse coordinates
+  // Convert undefined, null, or any non-number to null
+  if (mouseX === undefined || mouseX === null || typeof mouseX !== 'number' || isNaN(mouseX)) {
+    mouseX = null;
+  }
+  if (mouseY === undefined || mouseY === null || typeof mouseY !== 'number' || isNaN(mouseY)) {
+    mouseY = null;
+  }
+  
+  // If either coordinate is null, both must be null (button click = center zoom)
+  if (mouseX === null || mouseY === null) {
+    mouseX = null;
+    mouseY = null;
+  }
+  
+  // Store pending zoom (latest wins) - explicitly store null for button clicks
+  pendingZoom[slot] = { zoom: newZoom, mouseX, mouseY };
+  
+  // Cancel any pending frame
+  if (zoomRAF[slot]) {
+    cancelAnimationFrame(zoomRAF[slot]);
+  }
+  
+  // Schedule update for next frame
+  zoomRAF[slot] = requestAnimationFrame(() => {
+    performZoomUpdate(slot);
+    zoomRAF[slot] = null;
+  });
+}
+
+function performZoomUpdate(slot) {
+  const pending = pendingZoom[slot];
+  if (!pending) return;
+  
+  const newZoom = pending.zoom;
+  const mouseX = pending.mouseX;
+  const mouseY = pending.mouseY;
+  pendingZoom[slot] = null;
+  
+  const oldZoom = slot === 1 ? pdfZoom1 : pdfZoom2;
+  
+  // Update zoom state
+  if (slot === 1) pdfZoom1 = newZoom;
+  else pdfZoom2 = newZoom;
+  
+  const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+  const scrollContainer = slot === 1 ? pdfScroll1 : pdfScroll2;
+  
+  if (!scrollContent || !scrollContainer) {
+    updateZoomDisplay(slot);
+    return;
+  }
+  
+  // Get base page dimensions (stored during init)
+  const basePageWidth = parseFloat(scrollContent.dataset.basePageWidth);
+  const basePageHeight = parseFloat(scrollContent.dataset.basePageHeight);
+  
+  if (!basePageWidth || !basePageHeight) {
+    console.warn("Base page dimensions not found");
+    updateZoomDisplay(slot);
+    return;
+  }
+  
+  // Read current state
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const containerWidth = containerRect.width;
+  const containerHeight = containerRect.height;
+  const currentScrollX = scrollContainer.scrollLeft;
+  const currentScrollY = scrollContainer.scrollTop;
+  
+  // Determine focal point (viewport-relative)
+  // For button clicks (null mouse), use center
+  // For ctrl+scroll, use mouse position
+  let focalX = containerWidth / 2;
+  let focalY = containerHeight / 2;
+  
+  const hasValidMouse = (typeof mouseX === 'number' && typeof mouseY === 'number' && 
+                         !isNaN(mouseX) && !isNaN(mouseY));
+  
+  if (hasValidMouse) {
+    const relX = mouseX - containerRect.left;
+    const relY = mouseY - containerRect.top;
+    if (relX >= 0 && relX <= containerWidth && relY >= 0 && relY <= containerHeight) {
+      focalX = relX;
+      focalY = relY;
+    }
+  }
+  
+  // Calculate the content point at the focal position (in BASE coordinates)
+  // Current scroll is in current-zoom coordinates, so divide by oldZoom
+  const contentPointX = (currentScrollX + focalX) / oldZoom;
+  const contentPointY = (currentScrollY + focalY) / oldZoom;
+  
+  // Calculate new page dimensions
+  const newPageWidth = basePageWidth * newZoom;
+  const newPageHeight = basePageHeight * newZoom;
+  
+  // NO CSS TRANSFORM - resize page elements directly instead
+  // This ensures scroll range is correct without double-scaling
+  scrollContent.style.transform = 'none';
+  scrollContent.style.minWidth = '';
+  scrollContent.style.minHeight = '';
+  
+  // Resize all page elements
+  const pages = scrollContent.querySelectorAll('.pdf-scroll-page, .pdf-scroll-page-placeholder');
+  pages.forEach(page => {
+    page.style.width = `${newPageWidth}px`;
+    page.style.height = `${newPageHeight}px`;
+    page.style.minHeight = `${newPageHeight}px`;
+    page.style.maxHeight = `${newPageHeight}px`;
+    
+    // Scale the canvas inside (if rendered)
+    const canvas = page.querySelector('canvas');
+    if (canvas) {
+      canvas.style.width = `${newPageWidth}px`;
+      canvas.style.height = `${newPageHeight}px`;
+    }
+  });
+  
+  // Calculate new scroll position to keep content point at focal position
+  // After zoom, content point is at (contentPointX * newZoom, contentPointY * newZoom)
+  // To keep it at focal: newScroll + focal = contentPoint * newZoom
+  const newScrollX = (contentPointX * newZoom) - focalX;
+  const newScrollY = (contentPointY * newZoom) - focalY;
+  
+  // Get actual content dimensions after resize
+  const gap = 20;
+  const padding = 40;
+  const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+  const totalWidth = newPageWidth + padding;
+  const totalHeight = (newPageHeight + gap) * totalPages - gap + padding;
+  
+  // Clamp to valid scroll range
+  const maxScrollX = Math.max(0, totalWidth - containerWidth);
+  const maxScrollY = Math.max(0, totalHeight - containerHeight);
+  
+  scrollContainer.scrollLeft = Math.max(0, Math.min(newScrollX, maxScrollX));
+  scrollContainer.scrollTop = Math.max(0, Math.min(newScrollY, maxScrollY));
+  
+  updateZoomDisplay(slot);
+  
+  // Schedule high-resolution re-render after zoom ends (debounced)
+  scheduleZoomReRender(slot);
+}
+
+// Schedule re-render of visible pages at full resolution after zoom stops
+function scheduleZoomReRender(slot) {
+  // Clear any existing timer
+  if (zoomEndTimer[slot]) {
+    clearTimeout(zoomEndTimer[slot]);
+  }
+  
+  // Set new timer - will fire when zooming stops
+  zoomEndTimer[slot] = setTimeout(() => {
+    reRenderVisiblePagesAtZoom(slot);
+    zoomEndTimer[slot] = null;
+  }, ZOOM_RE_RENDER_DELAY);
+}
+
+// Re-render visible pages at current zoom level for crisp text
+async function reRenderVisiblePagesAtZoom(slot) {
+  const pdf = slot === 1 ? pdf1 : pdf2;
+  const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+  const scrollContainer = slot === 1 ? pdfScroll1 : pdfScroll2;
+  const currentZoom = slot === 1 ? pdfZoom1 : pdfZoom2;
+  const renderedPages = pdfRenderedPages[slot];
+  
+  if (!pdf || !scrollContent || !scrollContainer) return;
+  
+  // Get base scale (used for original render)
+  const baseScale = parseFloat(scrollContent.dataset.baseScale) || 1;
+  
+  // Only re-render when zoomed IN beyond 1.0
+  // When zooming out (zoom <= 1.0), CSS downscaling the original looks fine
+  if (currentZoom <= 1.02) return;
+  
+  // Find visible pages that need re-rendering
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const pagesToReRender = [];
+  
+  scrollContent.querySelectorAll('.pdf-scroll-page').forEach(page => {
+    const pageRect = page.getBoundingClientRect();
+    const isVisible = pageRect.bottom > containerRect.top && pageRect.top < containerRect.bottom;
+    if (isVisible) {
+      const pageNum = parseInt(page.dataset.pageNum);
+      // Check what zoom level this page was last rendered at
+      const renderedAtZoom = parseFloat(page.dataset.renderedAtZoom) || 1.0;
+      // Only re-render if current zoom is higher than what we have
+      if (currentZoom > renderedAtZoom + 0.05) {
+        pagesToReRender.push(pageNum);
+      }
+    }
+  });
+  
+  // No pages need re-rendering
+  if (pagesToReRender.length === 0) return;
+  
+  // Re-render each page that needs it
+  for (const pageNum of pagesToReRender) {
+    const pageElement = scrollContent.querySelector(`[data-page-num="${pageNum}"]`);
+    if (!pageElement || pageElement.classList.contains('pdf-scroll-page-placeholder')) continue;
+    
+    // Check if zoom changed during re-render (user zoomed again)
+    const checkZoom = slot === 1 ? pdfZoom1 : pdfZoom2;
+    if (Math.abs(checkZoom - currentZoom) > 0.01) return; // Zoom changed, abort
+    
+    try {
+      const page = await pdf.getPage(pageNum);
+      
+      // Render at the zoomed scale for crisp text
+      const renderScale = baseScale * currentZoom;
+      const viewport = page.getViewport({ scale: renderScale });
+      
+      // Create new canvas at high resolution
+      const newCanvas = document.createElement('canvas');
+      const pixelRatio = window.devicePixelRatio || 1;
+      newCanvas.width = viewport.width * pixelRatio;
+      newCanvas.height = viewport.height * pixelRatio;
+      
+      // Set display size to match current page element size
+      const displayWidth = parseFloat(pageElement.style.width);
+      const displayHeight = parseFloat(pageElement.style.height);
+      newCanvas.style.display = 'block';
+      newCanvas.style.width = `${displayWidth}px`;
+      newCanvas.style.height = `${displayHeight}px`;
+      newCanvas.style.margin = '0';
+      newCanvas.style.position = 'absolute';
+      newCanvas.style.top = '0';
+      newCanvas.style.left = '0';
+      newCanvas.style.opacity = '0'; // Start invisible
+      
+      // Render at high resolution
+      const context = newCanvas.getContext('2d');
+      context.scale(pixelRatio, pixelRatio);
+      await page.render({ canvasContext: context, viewport: viewport }).promise;
+      
+      // Double-check zoom hasn't changed
+      const finalZoom = slot === 1 ? pdfZoom1 : pdfZoom2;
+      if (Math.abs(finalZoom - currentZoom) > 0.01) {
+        // Zoom changed during render, discard this canvas
+        return;
+      }
+      
+      // Get the old canvas
+      const oldCanvas = pageElement.querySelector('canvas');
+      
+      // Make page element position relative for absolute positioning of new canvas
+      pageElement.style.position = 'relative';
+      
+      // Add new canvas behind old one
+      if (oldCanvas) {
+        pageElement.insertBefore(newCanvas, oldCanvas);
+      } else {
+        pageElement.appendChild(newCanvas);
+      }
+      
+      // Instant swap: make new canvas visible and remove old one
+      // Using requestAnimationFrame ensures the new canvas is painted first
+      requestAnimationFrame(() => {
+        newCanvas.style.position = 'relative';
+        newCanvas.style.opacity = '1';
+        if (oldCanvas && oldCanvas !== newCanvas) {
+          oldCanvas.remove();
+        }
+      });
+      
+      // Update cache and track what zoom we rendered at
+      renderedPages.set(pageNum, newCanvas);
+      pageElement.dataset.renderedAtZoom = currentZoom.toString();
+      
+    } catch (err) {
+      console.warn(`Re-render failed for page ${pageNum}:`, err);
+    }
+  }
+}
+
+// Zoom controls event listeners
+// Always zoom to center - use a special flag to force center zoom
+// Zoom controller buttons - ALWAYS zoom to center, NEVER use mouse coordinates
+document.getElementById('zoom-in-1')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  // Explicitly pass null (not undefined) to ensure no mouse coordinates are used
+  setZoom(1, pdfZoom1 + 0.25, null, null);
+});
+document.getElementById('zoom-out-1')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  setZoom(1, pdfZoom1 - 0.25, null, null);
+});
+document.getElementById('zoom-fit-1')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  setZoom(1, 1.0, null, null);
+});
+document.getElementById('zoom-in-2')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  setZoom(2, pdfZoom2 + 0.25, null, null);
+});
+document.getElementById('zoom-out-2')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  setZoom(2, pdfZoom2 - 0.25, null, null);
+});
+document.getElementById('zoom-fit-2')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  setZoom(2, 1.0, null, null);
+});
+
+// Mouse wheel zoom (Ctrl + scroll) - Zoom to mouse position
+// Use smoother delta calculation for better feel
+pdfScroll1?.addEventListener('wheel', (e) => {
+  if (e.ctrlKey) {
+    e.preventDefault();
+    // Use smaller increments for smoother zoom (like Chrome)
+    const zoomSpeed = 0.05;
+    const delta = e.deltaY > 0 ? -zoomSpeed : zoomSpeed;
+    // Pass mouse coordinates for zoom-to-mouse
+    setZoom(1, pdfZoom1 + delta, e.clientX, e.clientY);
+  }
+}, { passive: false });
+
+pdfScroll2?.addEventListener('wheel', (e) => {
+  if (e.ctrlKey) {
+    e.preventDefault();
+    // Use smaller increments for smoother zoom (like Chrome)
+    const zoomSpeed = 0.05;
+    const delta = e.deltaY > 0 ? -zoomSpeed : zoomSpeed;
+    // Pass mouse coordinates for zoom-to-mouse
+    setZoom(2, pdfZoom2 + delta, e.clientX, e.clientY);
+  }
+}, { passive: false });
+
+// Scroll event listeners for progress tracking (debounced)
+let scrollSaveTimeout1 = null;
+let scrollSaveTimeout2 = null;
+
+pdfScroll1?.addEventListener('scroll', () => {
+  if (scrollSaveTimeout1) clearTimeout(scrollSaveTimeout1);
+  scrollSaveTimeout1 = setTimeout(() => {
+    if (viewerType1 === 'pdf' && pdfViewMode === 'scroll') {
+      savePdfProgress(1);
+    }
+  }, 500);
+});
+
+pdfScroll2?.addEventListener('scroll', () => {
+  if (scrollSaveTimeout2) clearTimeout(scrollSaveTimeout2);
+  scrollSaveTimeout2 = setTimeout(() => {
+    if (viewerType2 === 'pdf' && pdfViewMode === 'scroll') {
+      savePdfProgress(2);
+    }
+  }, 500);
+});
 
 async function loadTOC(bookInstance, renditionInstance, listId) {
   const list = document.getElementById(listId);
@@ -1576,21 +2723,188 @@ function splitTextIntoChunks(text, maxTokens = 1000) {
 }
 
 async function playChapterTTS(text, key, voice) {
-  const chunks = splitTextIntoChunks(text);
+  ttsChunks = splitTextIntoChunks(text);
+  currentChunkIndex = 0;
+  isAborted = false;
+  isPaused = false;
+  ttsAbortController = { aborted: false };
 
-  for (const chunk of chunks) {
-    if (!isPlaying) break;
+  for (let i = 0; i < ttsChunks.length; i++) {
+    // Check if aborted
+    if (isAborted || ttsAbortController.aborted || !isPlaying) {
+      break;
+    }
+
+    // Wait if paused
+    while (isPaused && isPlaying && !isAborted) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // Check again after pause
+    if (isAborted || ttsAbortController.aborted || !isPlaying) {
+      break;
+    }
+
+    currentChunkIndex = i;
+    const chunk = ttsChunks[i];
+    
+    try {
     const base64Audio = await window.electronAPI.requestTTS(chunk, key, voice);
     if (!base64Audio) continue;
 
-    await new Promise((resolve) => {
+      await new Promise((resolve, reject) => {
+        // Check if aborted before creating audio
+        if (isAborted || ttsAbortController.aborted || !isPlaying) {
+          resolve();
+          return;
+        }
+
       currentAudio = new Audio("data:audio/mpeg;base64," + base64Audio);
+        
+        // Apply speech speed from settings
+        const speechSpeed = parseFloat(document.getElementById("speechSpeed")?.value) || 1.0;
+        currentAudio.playbackRate = speechSpeed;
+        
+        let checkInterval = null;
+        
+        const cleanup = () => {
+          if (checkInterval) {
+            clearInterval(checkInterval);
+            checkInterval = null;
+          }
+        };
+
       currentAudio.onended = () => {
+          cleanup();
         currentAudio = null;
         resolve();
       };
-      currentAudio.play();
-    });
+
+        currentAudio.onerror = (err) => {
+          console.error("Audio playback error:", err);
+          cleanup();
+          currentAudio = null;
+          resolve();
+        };
+
+        const playPromise = currentAudio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(err => {
+            console.error("Play error:", err);
+            cleanup();
+            currentAudio = null;
+            resolve();
+          });
+        }
+
+        // Check for abort/pause during playback
+        checkInterval = setInterval(() => {
+          if (!currentAudio) {
+            cleanup();
+            resolve();
+            return;
+          }
+          
+          if (isAborted || ttsAbortController.aborted || !isPlaying) {
+            if (currentAudio) {
+              currentAudio.pause();
+              currentAudio.currentTime = 0;
+              currentAudio = null;
+            }
+            cleanup();
+            resolve();
+          } else if (isPaused && currentAudio && !currentAudio.paused) {
+            currentAudio.pause();
+          } else if (!isPaused && currentAudio && currentAudio.paused && isPlaying && !isAborted) {
+            currentAudio.play().catch(err => {
+              console.error("Resume error:", err);
+            });
+          }
+        }, 100);
+      });
+    } catch (err) {
+      console.error("TTS chunk error:", err);
+      if (isAborted || ttsAbortController.aborted) break;
+    }
+  }
+
+  // Cleanup
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  ttsChunks = [];
+  currentChunkIndex = 0;
+}
+
+// Check if TTS is currently active (playing or paused)
+function isTTSActive() {
+  return isPlaying;
+}
+
+// Pause TTS
+function pauseTTS() {
+  if (isPlaying && currentAudio) {
+    isPaused = true;
+    currentAudio.pause();
+    updateTTSButtonState();
+  }
+}
+
+// Resume TTS
+function resumeTTS() {
+  if (isPlaying && isPaused) {
+    isPaused = false;
+    if (currentAudio) {
+      currentAudio.play().catch(err => {
+        console.error("Resume error:", err);
+      });
+    }
+    updateTTSButtonState();
+  }
+}
+
+// Abort/Stop TTS completely
+function abortTTS() {
+  isAborted = true;
+    isPlaying = false;
+  isPaused = false;
+  if (ttsAbortController) {
+    ttsAbortController.aborted = true;
+  }
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.currentTime = 0;
+    currentAudio = null;
+  }
+  ttsChunks = [];
+  currentChunkIndex = 0;
+  updateTTSButtonState();
+}
+
+// Update TTS button icon based on state
+function updateTTSButtonState() {
+  if (!speakBtn) return;
+  
+  const icon = speakBtn.querySelector('i');
+  if (!icon) return;
+  
+  // Update stop button state
+  if (stopTTSBtn) {
+    stopTTSBtn.disabled = !isTTSActive();
+  }
+  
+  if (isPlaying) {
+    if (isPaused) {
+      icon.className = 'fas fa-play';
+      speakBtn.title = 'Resume TTS';
+    } else {
+      icon.className = 'fas fa-pause';
+      speakBtn.title = 'Pause TTS';
+    }
+  } else {
+    icon.className = 'fas fa-play';
+    speakBtn.title = 'Play TTS (or select text to read selected portion)';
   }
 }
 
@@ -1603,22 +2917,118 @@ speakBtn?.addEventListener("click", async () => {
     return alert("Text-to-Speech is only available for EPUB files.");
   }
 
-  const key = document.getElementById("apiKey").value.trim();
-  const voice = document.getElementById("voiceSelect").value;
+  // Check if recording is in progress
+  if (isRecording) {
+    return alert("Cannot start TTS while recording is in progress. Please stop recording first.");
+  }
 
-  if (!key) return alert("Please go to Settings to enter your OpenAI API Key.");
-
-  if (isPlaying && currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
-    isPlaying = false;
+  // If paused, resume
+  if (isPaused && isPlaying) {
+    resumeTTS();
     return;
   }
 
-  const text = await getCurrentChapterText(rendition1);
-  if (!text) return alert("No text found in current chapter.");
+  // If playing, pause it
+  if (isPlaying && !isPaused) {
+    pauseTTS();
+    return;
+  }
+
+  // Check for selected text - if found, read it directly
+  const selection = window.getSelection();
+  if (selection && selection.toString().trim().length > 0) {
+    const text = selection.toString().trim();
+    await startTTSPlayback(text);
+    return;
+  }
+  
+  // Otherwise, show chapter selection modal
+  openTTSModal();
+});
+
+async function openTTSModal() {
+  if (!book1 || !ttsModal) return;
+  
+  const nav = await book1.loaded.navigation;
+  const chapters = nav.toc || [];
+  
+  // Populate chapter dropdown
+  ttsChapterSelect.innerHTML = '<option value="current">Current Chapter</option>';
+  chapters.forEach((chapter, index) => {
+    const option = document.createElement("option");
+    option.value = index;
+    option.textContent = chapter.label || `Chapter ${index + 1}`;
+    ttsChapterSelect.appendChild(option);
+  });
+  
+  // Try to select current chapter
+  if (rendition1) {
+    try {
+      const location = rendition1.currentLocation();
+      const currentHref = location?.start?.href;
+      if (currentHref) {
+        const matchingIndex = chapters.findIndex(ch => 
+          currentHref.includes(ch.href) || ch.href.includes(currentHref.split('#')[0])
+        );
+        if (matchingIndex !== -1) {
+          ttsChapterSelect.value = matchingIndex;
+        }
+      }
+    } catch (e) {
+      // Keep default
+    }
+  }
+  
+  ttsModal.style.display = "flex";
+}
+
+startTTSBtn?.addEventListener("click", async () => {
+  ttsModal.style.display = "none";
+  
+  const chapterSelection = ttsChapterSelect.value;
+  let text = "";
+  
+  if (chapterSelection === "current") {
+    text = await getCurrentChapterText(rendition1);
+  } else {
+    const nav = await book1.loaded.navigation;
+    const chapters = nav.toc || [];
+    const chapterIndex = parseInt(chapterSelection);
+    
+    if (!isNaN(chapterIndex) && chapters[chapterIndex]) {
+      // Navigate to chapter and get text
+      await rendition1.display(chapters[chapterIndex].href);
+      await new Promise(r => setTimeout(r, 300));
+      text = await getCurrentChapterText(rendition1);
+    }
+  }
+  
+  if (!text || text.trim().length === 0) {
+    return alert("No text found in this chapter.");
+  }
+  
+  await startTTSPlayback(text);
+});
+
+cancelTTSBtn?.addEventListener("click", () => {
+  ttsModal.style.display = "none";
+});
+
+ttsModal?.querySelector(".close-modal")?.addEventListener("click", () => {
+  ttsModal.style.display = "none";
+});
+
+async function startTTSPlayback(text) {
+  const key = document.getElementById("apiKey").value.trim();
+  const voice = document.getElementById("voiceSelect").value;
+
+  if (!key) return alert("Please set your OpenAI API Key in Settings.");
 
   isPlaying = true;
+  isPaused = false;
+  isAborted = false;
+  updateTTSButtonState();
+
   try {
     await playChapterTTS(text, key, voice);
   } catch (err) {
@@ -1626,6 +3036,27 @@ speakBtn?.addEventListener("click", async () => {
     alert("TTS Error: " + err.message);
   } finally {
     isPlaying = false;
+    isPaused = false;
+    updateTTSButtonState();
+  }
+}
+
+// Stop button functionality
+stopTTSBtn?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  voicePopup?.classList.remove("open");
+  voiceMenuBtn?.classList.remove("active");
+  if (isTTSActive()) {
+    abortTTS();
+  }
+});
+
+// Add double-click to stop on speak button
+speakBtn?.addEventListener("dblclick", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (isTTSActive()) {
+    abortTTS();
   }
 });
 
@@ -1644,7 +3075,7 @@ const recordCurrentChapterEl = document.getElementById("recordCurrentChapter");
 const startRecordBtn = document.getElementById("start-record-btn");
 const cancelRecordBtn = document.getElementById("cancel-record-btn");
 const recordVoiceSelect = document.getElementById("recordVoiceSelect");
-const recordCurrentChapterOnly = document.getElementById("recordSingleChapter");
+const recordChapterSelect = document.getElementById("recordChapterSelect");
 
 let isRecording = false;
 let cancelRecording = false;
@@ -1701,7 +3132,45 @@ async function openRecordModal() {
   chaptersToRecord = nav.toc || [];
   recordBookChapters.textContent = `${chaptersToRecord.length} chapters`;
   
-  // Get current chapter name
+  // Populate chapter dropdown
+  if (recordChapterSelect) {
+    recordChapterSelect.innerHTML = '<option value="current">Current Chapter</option><option value="all">All Chapters</option>';
+    
+    // Add individual chapters
+    chaptersToRecord.forEach((chapter, index) => {
+      const option = document.createElement("option");
+      option.value = index;
+      option.textContent = chapter.label || `Chapter ${index + 1}`;
+      recordChapterSelect.appendChild(option);
+    });
+    
+    // Try to detect and select current chapter
+    if (rendition1) {
+      try {
+        const location = rendition1.currentLocation();
+        const currentHref = location?.start?.href;
+        
+        if (currentHref) {
+          const matchingIndex = chaptersToRecord.findIndex(ch => 
+            currentHref.includes(ch.href) || ch.href.includes(currentHref.split('#')[0])
+          );
+          if (matchingIndex !== -1) {
+            recordChapterSelect.value = matchingIndex;
+          } else {
+            recordChapterSelect.value = "current";
+          }
+        } else {
+          recordChapterSelect.value = "current";
+        }
+      } catch (e) {
+        recordChapterSelect.value = "current";
+      }
+    } else {
+      recordChapterSelect.value = "current";
+    }
+  }
+  
+  // Get current chapter name for display
   const currentChapterEl = document.getElementById("currentChapterName");
   if (currentChapterEl && rendition1) {
     try {
@@ -1734,7 +3203,6 @@ async function openRecordModal() {
   startRecordBtn.innerHTML = '<i class="fas fa-circle"></i> Start Recording';
   startRecordBtn.classList.remove("recording");
   cancelRecordBtn.textContent = "Cancel";
-  recordCurrentChapterOnly.checked = false;
   
   recordModal.style.display = "flex";
 }
@@ -1758,6 +3226,11 @@ recordModal?.querySelector(".close-modal")?.addEventListener("click", () => {
 });
 
 async function startRecording() {
+  // Check if TTS is currently active
+  if (isTTSActive()) {
+    return alert("Cannot start recording while TTS is playing. Please stop TTS first.");
+  }
+  
   const apiKey = document.getElementById("apiKey").value.trim();
   if (!apiKey) {
     return alert("Please set your OpenAI API key in Settings first.");
@@ -1775,7 +3248,7 @@ async function startRecording() {
   const folderPath = folderResult.path;
   
   const voice = recordVoiceSelect.value;
-  const currentOnly = recordCurrentChapterOnly.checked;
+  const chapterSelection = recordChapterSelect ? recordChapterSelect.value : "current";
   
   isRecording = true;
   cancelRecording = false;
@@ -1787,12 +3260,20 @@ async function startRecording() {
   startRecordBtn.classList.add("recording");
   
   try {
-    if (currentOnly) {
+    if (chapterSelection === "all") {
+      // Record all chapters
+      await recordAllChapters(folderPath, apiKey, voice);
+    } else if (chapterSelection === "current") {
       // Record current chapter only
       await recordCurrentChapter(folderPath, apiKey, voice);
     } else {
-      // Record all chapters
-      await recordAllChapters(folderPath, apiKey, voice);
+      // Record specific chapter by index
+      const chapterIndex = parseInt(chapterSelection);
+      if (!isNaN(chapterIndex) && chapterIndex >= 0 && chapterIndex < chaptersToRecord.length) {
+        await recordSpecificChapter(folderPath, apiKey, voice, chapterIndex);
+      } else {
+        await recordCurrentChapter(folderPath, apiKey, voice);
+      }
     }
     
     if (!cancelRecording) {
@@ -1805,6 +3286,77 @@ async function startRecording() {
     isRecording = false;
     cancelRecording = false;
     recordModal.style.display = "none";
+  }
+}
+
+async function recordSpecificChapter(folderPath, apiKey, voice, chapterIndex) {
+  if (chapterIndex < 0 || chapterIndex >= chaptersToRecord.length) {
+    return alert("Invalid chapter index");
+  }
+  
+  const chapter = chaptersToRecord[chapterIndex];
+  recordCurrentChapterEl.textContent = chapter.label || `Chapter ${chapterIndex + 1}`;
+  
+  updateRecordProgress(
+    `Recording: ${chapter.label}`, 
+    0,
+    `Chapter ${chapterIndex + 1}`
+  );
+  
+  try {
+    // Navigate to chapter and get text
+    await rendition1.display(chapter.href);
+    await new Promise(r => setTimeout(r, 500)); // Wait for render
+    
+    const text = await getChapterText(book1, chapter.href);
+    if (!text || text.trim().length < 10) {
+      throw new Error("Chapter has no text content");
+    }
+    
+    // Process chapter in chunks - save each separately
+    const chunks = splitTextIntoChunks(text, 4000);
+    const audioPaths = [];
+    
+    for (let j = 0; j < chunks.length; j++) {
+      if (cancelRecording) return;
+      
+      const progress = Math.round(((j + 1) / chunks.length) * 100);
+      updateRecordProgress(
+        `Processing: ${chapter.label}`,
+        progress,
+        `Part ${j + 1}/${chunks.length}`
+      );
+      
+      const result = await window.electronAPI.generateTtsChunk(chunks[j], apiKey, voice);
+      if (!result.success) {
+        console.error(`TTS error for chapter ${chapterIndex + 1}, part ${j + 1}:`, result.error);
+        continue;
+      }
+      
+      // Save each chunk as separate file
+      const partNum = String(j + 1).padStart(3, '0');
+      const fileName = sanitizeFileName(chapter.label || `Chapter_${chapterIndex + 1}`);
+      const partFileName = `${fileName}_part${partNum}.mp3`;
+      
+      const saveResult = await window.electronAPI.saveMp3Chunk(folderPath, partFileName, result.audio);
+      if (!saveResult.success) {
+        console.error(`Failed to save chunk ${j + 1}:`, saveResult.error);
+        continue;
+      }
+      audioPaths.push(saveResult.filePath);
+    }
+    
+    // Save audio paths to book metadata
+    await saveChapterAudio(chapter.href, audioPaths);
+    
+    updateRecordProgress(
+      `Completed: ${chapter.label}`, 
+      100,
+      `Chapter ${chapterIndex + 1}`
+    );
+  } catch (err) {
+    console.error(`Error recording chapter ${chapterIndex + 1}:`, err);
+    alert(`Error recording chapter: ${err.message}`);
   }
 }
 
@@ -2755,8 +4307,7 @@ function applyHighlightToRendition(highlight) {
   
   try {
     rendition1.annotations.highlight(highlight.cfi, {}, (e) => {
-      // Click handler for highlight
-      console.log("Highlight clicked:", highlight.id);
+      // Click handler for highlight - could show note/edit modal here
     }, "hl-" + highlight.id, {
       "fill": highlight.color,
       "fill-opacity": "0.4"

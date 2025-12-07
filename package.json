@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "description": "A beautiful EPUB and PDF reader with OpenAI voice playback and audiobook recording",
   "main": "main.js",
-  "author": "",
+  "homepage": "https://github.com/Thoth-source/Reader",
+  "author": {
+    "name": "Reader App",
+    "email": "readerappdev@proton.me"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -11,6 +15,7 @@
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
+    "build:linux:dir": "electron-builder --linux --dir",
     "build:all": "electron-builder --win --mac --linux"
   },
   "dependencies": {
@@ -70,7 +75,8 @@
         "deb"
       ],
       "icon": "build/icon.png",
-      "category": "Office"
+      "category": "Office",
+      "maintainer": "readerappdev@proton.me"
     },
     "nsis": {
       "oneClick": false,
