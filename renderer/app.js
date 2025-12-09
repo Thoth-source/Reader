@@ -53,6 +53,8 @@ let currentAudio = null;
 let ttsChunks = [];
 let currentChunkIndex = 0;
 let ttsAbortController = null;
+// TTS volume (0.0 to 1.0)
+let ttsVolume = parseFloat(localStorage.getItem("tts_volume") || "1.0");
 let targetSlot = 1;
 let focusedSlot = 1;
 let currentFilter = 'all';
@@ -203,6 +205,24 @@ function loadSettingsValues() {
     applyTheme(savedTheme);
   }
   
+  // Load column layout (default: 2 = two-page spread)
+  const savedColumnLayout = localStorage.getItem("column_layout") || "2";
+  const columnLayoutSelect = document.getElementById("columnLayout");
+  if (columnLayoutSelect) {
+    columnLayoutSelect.value = savedColumnLayout;
+    // Apply spread setting immediately when changed
+    columnLayoutSelect.addEventListener("change", () => {
+      localStorage.setItem("column_layout", columnLayoutSelect.value);
+      // Apply to both renditions
+      if (rendition1 && viewerType1 === 'epub') {
+        applyColumnLayout(rendition1, parseInt(columnLayoutSelect.value));
+      }
+      if (rendition2 && viewerType2 === 'epub') {
+        applyColumnLayout(rendition2, parseInt(columnLayoutSelect.value));
+      }
+    });
+  }
+  
   // Load PDF view mode
   const savedPdfMode = localStorage.getItem("pdf_view_mode") || "paged";
   const pdfViewModeSelect = document.getElementById("pdfViewMode");
@@ -258,6 +278,10 @@ document.getElementById("save-settings-btn")?.addEventListener("click", () => {
   const theme = document.getElementById("themeSelect").value;
   localStorage.setItem("app_theme", theme);
   applyTheme(theme);
+  
+  // Save column layout
+  const columnLayout = document.getElementById("columnLayout").value;
+  localStorage.setItem("column_layout", columnLayout);
   
   // Save PDF view mode
   const newPdfViewMode = document.getElementById("pdfViewMode").value;
@@ -370,17 +394,53 @@ function updateEPUBThemes() {
 function applyReaderSettings() {
   const fontSize = localStorage.getItem("reader_font_size") || "100";
   const margin = localStorage.getItem("reader_margin") || "50";
+  const columnLayout = localStorage.getItem("column_layout") || "2";
   
   document.querySelectorAll(".epub-viewer").forEach(el => {
     el.style.padding = `0 ${margin}px`;
   });
   
-  // Apply to epub.js renditions if available
+  // Apply column layout
+  const columnCount = parseInt(columnLayout);
   if (rendition1) {
     rendition1.themes.fontSize(`${fontSize}%`);
+    applyColumnLayout(rendition1, columnCount);
+    // Re-apply user highlights after column layout change
+    if (currentBookPath1) {
+      setTimeout(() => {
+        loadHighlightsForBook(currentBookPath1);
+      }, 300);
+    }
   }
   if (rendition2) {
     rendition2.themes.fontSize(`${fontSize}%`);
+    applyColumnLayout(rendition2, columnCount);
+  }
+}
+
+// Page spread setting uses EPUB.js spread (CSS columns incompatible with pagination)
+// 1 = single page, 2 = two-page spread (EPUB.js native)
+// Note: Split view always forces single page regardless of preference
+function applyColumnLayout(rendition, columnCount) {
+  if (!rendition) return;
+  
+  try {
+    // Get the actual spread setting (respects split view state)
+    const spreadValue = getSpreadSetting();
+    
+    // Update spread setting via views manager if available
+    if (rendition.views && typeof rendition.views.spread === 'function') {
+      rendition.views.spread(spreadValue);
+    }
+    
+    // Force resize to apply changes
+    setTimeout(() => {
+      if (rendition) {
+        rendition.resize();
+      }
+    }, 50);
+  } catch (err) {
+    console.warn("Error applying page spread:", err);
   }
 }
 
@@ -443,6 +503,7 @@ function openTagModal(bookPath) {
   editingBookPath = bookPath;
   tagModal.style.display = "flex";
   renderCurrentTags();
+  renderExistingTags();
 }
 
 function renderCurrentTags() {
@@ -450,20 +511,61 @@ function renderCurrentTags() {
   if (!book || !currentTagsContainer) return;
   
   const tags = book.tags || [];
-  currentTagsContainer.innerHTML = tags.length === 0 
-    ? '<span style="color: var(--text-muted); font-size: 13px;">No tags yet</span>'
-    : tags.map(tag => `
-        <span class="tag-chip" style="background: ${tag.color};">
-          ${tag.name}
-          <button class="remove-tag" data-name="${tag.name}">&times;</button>
-        </span>
-      `).join('');
+  currentTagsContainer.innerHTML = tags.map(tag => `
+    <span class="tag-chip" style="background: ${tag.color};">
+      ${tag.name}
+      <button class="remove-tag" data-name="${tag.name}">&times;</button>
+    </span>
+  `).join('');
   
   // Add remove listeners
   currentTagsContainer.querySelectorAll(".remove-tag").forEach(btn => {
     btn.addEventListener("click", () => {
       removeTagFromBook(editingBookPath, btn.dataset.name);
       renderCurrentTags();
+      renderExistingTags(); // Re-render to show removed tag as available
+    });
+  });
+}
+
+function renderExistingTags() {
+  const existingTagsContainer = document.getElementById("existingTags");
+  if (!existingTagsContainer) return;
+  
+  const currentBook = library.find(b => b.path === editingBookPath);
+  const currentTagNames = (currentBook?.tags || []).map(t => t.name.toLowerCase());
+  
+  // Collect all unique tags from all books
+  const allTags = new Map();
+  library.forEach(book => {
+    (book.tags || []).forEach(tag => {
+      // Only add if not already on current book
+      if (!currentTagNames.includes(tag.name.toLowerCase())) {
+        allTags.set(tag.name.toLowerCase(), { name: tag.name, color: tag.color });
+      }
+    });
+  });
+  
+  if (allTags.size === 0) {
+    existingTagsContainer.innerHTML = '';
+    return;
+  }
+  
+  existingTagsContainer.innerHTML = Array.from(allTags.values()).map(tag => `
+    <button class="existing-tag-btn" style="background: ${tag.color};" data-name="${tag.name}" data-color="${tag.color}">
+      <i class="fas fa-plus"></i> ${tag.name}
+    </button>
+  `).join('');
+  
+  // Add click listeners to add existing tags
+  existingTagsContainer.querySelectorAll(".existing-tag-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      await addTagToBook(editingBookPath, btn.dataset.name, btn.dataset.color);
+      renderCurrentTags();
+      renderExistingTags();
+      renderLibrary();
+      renderRecentlyRead();
+      updateFilterTags();
     });
   });
 }
@@ -579,39 +681,65 @@ if (sidebarToggle && !sidebar.classList.contains("collapsed")) {
 // SPLIT VIEW LOGIC
 // -------------------------------------------------------
 
-// Helper function to get spread setting based on split view state
+// Helper function to get spread setting based on split view state and user preference
 function getSpreadSetting() {
   const isSplitMode = viewersContainer.classList.contains("split-mode");
-  // When split view is open: single page. When closed: two-page spread
-  return isSplitMode ? "none" : "always";
+  // When split view is open: always single page (not enough room)
+  if (isSplitMode) return "none";
+  
+  // When not in split view: respect user's page spread preference
+  const savedSpread = localStorage.getItem("column_layout") || "2";
+  const spreadPref = parseInt(savedSpread);
+  // 1 = single page ("none"), 2 = two-page spread ("always")
+  return spreadPref === 2 ? "always" : "none";
 }
 
 // Helper function to update EPUB spread settings
 function updateEPUBSpread() {
   const spreadSetting = getSpreadSetting();
+  console.log("updateEPUBSpread called, spreadSetting:", spreadSetting);
+  
   if (rendition1 && viewerType1 === 'epub') {
     try {
-      // EPUB.js: change spread setting and resize
-      if (rendition1.views && rendition1.views.length > 0) {
-        // Update spread on the views manager
+      // EPUB.js: change spread setting via views manager
+      if (rendition1.views && typeof rendition1.views.spread === 'function') {
         rendition1.views.spread(spreadSetting);
+        console.log("Applied spread to rendition1:", spreadSetting);
       }
       // Resize to apply the new spread
       setTimeout(() => {
-        if (rendition1) rendition1.resize();
+        if (rendition1) {
+          rendition1.resize();
+          // Re-apply highlights after spread change
+          if (currentBookPath1) {
+            setTimeout(() => {
+              loadHighlightsForBook(currentBookPath1);
+            }, 200);
+          }
+        }
       }, 100);
     } catch (e) {
       console.warn("Could not update spread for rendition1:", e);
       // Fallback: just resize
       setTimeout(() => {
-        if (rendition1) rendition1.resize();
+        if (rendition1) {
+          rendition1.resize();
+          // Re-apply highlights after resize
+          if (currentBookPath1) {
+            setTimeout(() => {
+              loadHighlightsForBook(currentBookPath1);
+            }, 200);
+          }
+        }
       }, 100);
     }
   }
+  
   if (rendition2 && viewerType2 === 'epub') {
     try {
-      if (rendition2.views && rendition2.views.length > 0) {
+      if (rendition2.views && typeof rendition2.views.spread === 'function') {
         rendition2.views.spread(spreadSetting);
+        console.log("Applied spread to rendition2:", spreadSetting);
       }
       setTimeout(() => {
         if (rendition2) rendition2.resize();
@@ -808,14 +936,15 @@ function getCurrentScrollPage(slot) {
   const scrollContainer = slot === 1 ? pdfScroll1 : pdfScroll2;
   if (!scrollContainer) return 1;
   
-  const pages = scrollContainer.querySelectorAll('.pdf-scroll-page');
+  // Query both rendered pages and placeholders
+  const pages = scrollContainer.querySelectorAll('.pdf-scroll-page, .pdf-scroll-page-placeholder');
   const containerRect = scrollContainer.getBoundingClientRect();
   const containerMiddle = containerRect.top + containerRect.height / 2;
   
   for (const page of pages) {
     const rect = page.getBoundingClientRect();
     if (rect.top <= containerMiddle && rect.bottom >= containerMiddle) {
-      return parseInt(page.dataset.page) || 1;
+      return parseInt(page.dataset.pageNum) || 1; // Fixed: was .page, should be .pageNum
     }
   }
   
@@ -1089,8 +1218,8 @@ function renderRecentlyRead() {
       const centerX = rect.width / 2;
       const centerY = rect.height / 2;
       
-      const rotateX = (y - centerY) / 8;
-      const rotateY = (centerX - x) / 8;
+      const rotateX = (y - centerY) / 12;
+      const rotateY = (centerX - x) / 12;
       
       inner.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.05)`;
       
@@ -1186,7 +1315,6 @@ function renderLibrary() {
           <button class="option-open-2"><i class="fas fa-columns"></i> Open in Viewer 2</button>
           <div class="option-divider"></div>
           <button class="option-edit"><i class="fas fa-edit"></i> Edit Details</button>
-          <button class="option-tags"><i class="fas fa-tags"></i> Manage Tags</button>
           <div class="option-divider"></div>
           <button class="option-remove"><i class="fas fa-trash"></i> Remove</button>
         </div>
@@ -1204,8 +1332,8 @@ function renderLibrary() {
       const centerX = rect.width / 2;
       const centerY = rect.height / 2;
       
-      const rotateX = (y - centerY) / 8;
-      const rotateY = (centerX - x) / 8;
+      const rotateX = (y - centerY) / 20;
+      const rotateY = (centerX - x) / 20;
       
       inner.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.05)`;
       
@@ -1255,12 +1383,6 @@ function renderLibrary() {
       e.stopPropagation();
       optionsMenu.classList.remove("show");
       openEditBookModal(book.path);
-    });
-    
-    card.querySelector(".option-tags").addEventListener("click", (e) => {
-      e.stopPropagation();
-      optionsMenu.classList.remove("show");
-      openTagModal(book.path);
     });
     
     card.querySelector(".option-remove").addEventListener("click", async (e) => {
@@ -1415,22 +1537,82 @@ function blobToDataUrl(blob) {
   });
 }
 
+// Import and open file from path (for "Open With" functionality)
+async function importAndOpenFile(filePath) {
+  try {
+    const fileName = filePath.split(/[/\\]/).pop();
+    const isPDF = fileName.toLowerCase().endsWith('.pdf');
+    
+    // Read the file
+    const data = await window.electronAPI.readBook(filePath);
+    if (!data) throw new Error("Could not read file");
+    
+    const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    const file = new File([arrayBuffer], fileName);
+    
+    // Import the file (add to library)
+    if (isPDF) {
+      await importPDF(file, filePath);
+    } else {
+      await importEPUB(file, filePath);
+    }
+    
+    // Reload library to get the new book
+    await loadLibrary();
+    
+    // Determine which slot to use for "Open With"
+    // For "Open With", use the focused slot (where user is currently working)
+    // If split view is open and viewer 2 is empty, use slot 2
+    const isSplitMode = viewersContainer.classList.contains("split-mode");
+    let slotToUse = focusedSlot || 1;
+    
+    if (isSplitMode && !book2 && !pdf2) {
+      // Split view is open but slot 2 is empty - use slot 2
+      slotToUse = 2;
+    }
+    
+    // Switch to reader page first
+    switchView("reader");
+    
+    // Open the book in the determined slot
+    await openBookWithTransition(filePath, slotToUse);
+  } catch (err) {
+    console.error("Error importing/opening file:", err);
+    alert("Failed to open file: " + err.message);
+  }
+}
+
+// Handle "Open With" - files opened via command line or file association
+if (window.electronAPI && window.electronAPI.onOpenFile) {
+  window.electronAPI.onOpenFile((filePath) => {
+    importAndOpenFile(filePath);
+  });
+}
+
 // -------------------------------------------------------
 // READER LOGIC
 // -------------------------------------------------------
 async function openBook(path, slot) {
   try {
-    // Track which book is in which slot
+    // Clear old book path first to ensure clean state
     if (slot === 1) {
-      currentBookPath1 = path;
+      currentBookPath1 = null;
     } else {
-      currentBookPath2 = path;
+      currentBookPath2 = null;
     }
     
     const isPDF = path.toLowerCase().endsWith('.pdf');
     const data = await window.electronAPI.readBook(path);
     
+    // Validate data BEFORE setting the new path
     if (!data) throw new Error("Could not read file (empty response)");
+    
+    // Set new book path only after file is successfully read and validated
+    if (slot === 1) {
+      currentBookPath1 = path;
+    } else {
+      currentBookPath2 = path;
+    }
 
     const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
 
@@ -1479,24 +1661,69 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
   await loadLibrary();
   
   if (slot === 1) {
-    if (book1) book1.destroy();
-    if (pdf1) { pdf1 = null; pdfCanvas1.style.display = 'none'; }
+    // Clean up old book and rendition completely
+    if (rendition1) {
+      rendition1.destroy();
+      rendition1 = null;
+    }
+    if (book1) {
+      book1.destroy();
+      book1 = null;
+    }
+    if (pdf1) {
+      pdf1 = null;
+      pdfCanvas1.style.display = 'none';
+    }
+    // Clean up PDF scroll resources
+    if (pdfScrollObservers[1]) {
+      pdfScrollObservers[1].disconnect();
+      pdfScrollObservers[1] = null;
+    }
+    pdfRenderedPages[1].clear();
+    
     viewerType1 = 'epub';
     
+    // Reset all display states - EPUB viewer visible, PDF elements hidden
     viewer1El.style.display = 'block';
     viewer1El.innerHTML = "";
-    document.getElementById("chapters").innerHTML = "";
+    
+    // Show chapters sidebar (PDF hides it)
+    const chaptersEl = document.getElementById("chapters");
+    chaptersEl.innerHTML = "";
+    chaptersEl.style.display = "block";
+    
+    // Hide PDF elements
     document.getElementById("pdf-pages-1").style.display = "none";
     document.getElementById("pdf-pages-1").innerHTML = "";
+    
+    // Hide PDF scroll containers
+    const scroll1 = document.getElementById("pdf-scroll-1");
+    if (scroll1) scroll1.style.display = 'none';
+    const scrollContent1 = document.getElementById("pdf-scroll-content-1");
+    if (scrollContent1) scrollContent1.innerHTML = '';
+    viewerWrapper1.classList.remove('pdf-scroll-mode');
+    
+    // Hide PDF zoom controls
+    if (pdfZoomControls1) pdfZoomControls1.style.display = 'none';
     
     book1 = ePub(arrayBuffer);
     
     // Wait for book to be ready
     await book1.ready;
     
-    // Ensure viewer is visible and has dimensions
+    // Ensure viewer is visible and has proper dimensions before rendering
     viewer1El.style.display = 'block';
-    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // Use requestAnimationFrame to ensure layout is calculated
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Verify viewer has dimensions
+    const rect = viewer1El.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      console.warn("Viewer has no dimensions, waiting for layout...");
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
     
     // Use dynamic spread: two pages when split view is closed, single page when open
     const spreadSetting = getSpreadSetting();
@@ -1525,6 +1752,11 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
       await rendition1.display();
     }
     
+    // Apply column layout (spread setting) after display
+    const savedColumnLayoutAfterDisplay = localStorage.getItem("column_layout") || "2";
+    const columnCountAfterDisplay = parseInt(savedColumnLayoutAfterDisplay);
+    applyColumnLayout(rendition1, columnCountAfterDisplay);
+    
     // Force resize immediately and multiple times to ensure content renders
     if (rendition1) {
       rendition1.resize();
@@ -1545,6 +1777,16 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     loadTOC(book1, rendition1, "chapters");
     setupRenditionFocus(rendition1, 1);
     setupHighlightSelection(rendition1, 1);
+    
+    // Listen for rendition resize events to re-apply highlights
+    rendition1.on("resized", () => {
+      // Re-apply user highlights after resize (they may be lost during re-render)
+      if (currentBookPath1) {
+        setTimeout(() => {
+          loadHighlightsForBook(currentBookPath1);
+        }, 200);
+      }
+    });
     
     // Restore saved position after initial render (only if not a new book)
     const savedCfi = getSavedPosition(bookPath);
@@ -1578,24 +1820,69 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     });
 
   } else {
-    if (book2) book2.destroy();
-    if (pdf2) { pdf2 = null; pdfCanvas2.style.display = 'none'; }
+    // Clean up old book and rendition completely
+    if (rendition2) {
+      rendition2.destroy();
+      rendition2 = null;
+    }
+    if (book2) {
+      book2.destroy();
+      book2 = null;
+    }
+    if (pdf2) {
+      pdf2 = null;
+      pdfCanvas2.style.display = 'none';
+    }
+    // Clean up PDF scroll resources
+    if (pdfScrollObservers[2]) {
+      pdfScrollObservers[2].disconnect();
+      pdfScrollObservers[2] = null;
+    }
+    pdfRenderedPages[2].clear();
+    
     viewerType2 = 'epub';
     
+    // Reset all display states - EPUB viewer visible, PDF elements hidden
     viewer2El.style.display = 'block';
     viewer2El.innerHTML = "";
-    document.getElementById("chapters-2").innerHTML = "";
+    
+    // Show chapters sidebar (PDF hides it)
+    const chaptersEl2 = document.getElementById("chapters-2");
+    chaptersEl2.innerHTML = "";
+    chaptersEl2.style.display = "block";
+    
+    // Hide PDF elements
     document.getElementById("pdf-pages-2").style.display = "none";
     document.getElementById("pdf-pages-2").innerHTML = "";
+    
+    // Hide PDF scroll containers
+    const scroll2 = document.getElementById("pdf-scroll-2");
+    if (scroll2) scroll2.style.display = 'none';
+    const scrollContent2 = document.getElementById("pdf-scroll-content-2");
+    if (scrollContent2) scrollContent2.innerHTML = '';
+    viewerWrapper2.classList.remove('pdf-scroll-mode');
+    
+    // Hide PDF zoom controls
+    if (pdfZoomControls2) pdfZoomControls2.style.display = 'none';
     
     book2 = ePub(arrayBuffer);
     
     // Wait for book to be ready
     await book2.ready;
     
-    // Ensure viewer is visible and has dimensions
+    // Ensure viewer is visible and has proper dimensions before rendering
     viewer2El.style.display = 'block';
-    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // Use requestAnimationFrame to ensure layout is calculated
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Verify viewer has dimensions
+    const rect = viewer2El.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      console.warn("Viewer 2 has no dimensions, waiting for layout...");
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
     
     // Use dynamic spread: two pages when split view is closed, single page when open
     const spreadSetting = getSpreadSetting();
@@ -1622,6 +1909,11 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     } else {
       await rendition2.display();
     }
+    
+    // Re-apply column layout after display (ensures it's applied correctly)
+    const savedColumnLayoutAfterDisplay2 = localStorage.getItem("column_layout") || "2";
+    const columnCountAfterDisplay2 = parseInt(savedColumnLayoutAfterDisplay2);
+    applyColumnLayout(rendition2, columnCountAfterDisplay2);
     
     // Force resize immediately and multiple times to ensure content renders
     if (rendition2) {
@@ -1686,14 +1978,35 @@ async function openPDF(arrayBuffer, slot, bookPath) {
   pdfViewMode = localStorage.getItem('pdf_view_mode') || 'paged';
   
   if (slot === 1) {
-    if (book1) { book1.destroy(); book1 = null; rendition1 = null; }
+    // Clean up old EPUB book and rendition
+    if (rendition1) {
+      rendition1.destroy();
+      rendition1 = null;
+    }
+    if (book1) {
+      book1.destroy();
+      book1 = null;
+    }
+    
+    // Clean up old PDF resources
+    if (pdfScrollObservers[1]) {
+      pdfScrollObservers[1].disconnect();
+      pdfScrollObservers[1] = null;
+    }
+    pdfRenderedPages[1].clear();
+    
+    // Set new PDF
     pdf1 = pdf;
     pdfPage1 = Math.min(savedPage, pdf.numPages);
     pdfTotalPages1 = pdf.numPages;
     viewerType1 = 'pdf';
     pdfZoom1 = 1.0;
     
+    // Hide EPUB viewer and clear its content
     viewer1El.style.display = 'none';
+    viewer1El.innerHTML = "";
+    
+    // Hide chapters sidebar (EPUB-only feature)
     document.getElementById("chapters").innerHTML = "";
     document.getElementById("chapters").style.display = "none";
     
@@ -1721,13 +2034,6 @@ async function openPDF(arrayBuffer, slot, bookPath) {
         await renderPdfPage(1);
       }
     } else {
-      // Cleanup scroll mode observers
-      if (pdfScrollObservers[1]) {
-        pdfScrollObservers[1].disconnect();
-        pdfScrollObservers[1] = null;
-      }
-      pdfRenderedPages[1].clear();
-      
       pdfCanvas1.style.display = 'block';
       if (scroll1) scroll1.style.display = 'none';
       if (pdfZoomControls1) pdfZoomControls1.style.display = 'none';
@@ -1740,14 +2046,35 @@ async function openPDF(arrayBuffer, slot, bookPath) {
     updateTTSAvailability();
     
   } else {
-    if (book2) { book2.destroy(); book2 = null; rendition2 = null; }
+    // Clean up old EPUB book and rendition
+    if (rendition2) {
+      rendition2.destroy();
+      rendition2 = null;
+    }
+    if (book2) {
+      book2.destroy();
+      book2 = null;
+    }
+    
+    // Clean up old PDF resources
+    if (pdfScrollObservers[2]) {
+      pdfScrollObservers[2].disconnect();
+      pdfScrollObservers[2] = null;
+    }
+    pdfRenderedPages[2].clear();
+    
+    // Set new PDF
     pdf2 = pdf;
     pdfPage2 = Math.min(savedPage, pdf.numPages);
     pdfTotalPages2 = pdf.numPages;
     viewerType2 = 'pdf';
     pdfZoom2 = 1.0;
     
+    // Hide EPUB viewer and clear its content
     viewer2El.style.display = 'none';
+    viewer2El.innerHTML = "";
+    
+    // Hide chapters sidebar (EPUB-only feature)
     document.getElementById("chapters-2").innerHTML = "";
     document.getElementById("chapters-2").style.display = "none";
     
@@ -1773,13 +2100,6 @@ async function openPDF(arrayBuffer, slot, bookPath) {
         await renderPdfPage(2);
       }
     } else {
-      // Cleanup scroll mode observers
-      if (pdfScrollObservers[2]) {
-        pdfScrollObservers[2].disconnect();
-        pdfScrollObservers[2] = null;
-      }
-      pdfRenderedPages[2].clear();
-      
       pdfCanvas2.style.display = 'block';
       if (scroll2) scroll2.style.display = 'none';
       if (pdfZoomControls2) pdfZoomControls2.style.display = 'none';
@@ -1941,6 +2261,16 @@ async function renderPdfScrollMode(slot) {
     return;
   }
   
+  // CRITICAL: Clear rendered pages cache when re-opening PDF
+  // Without this, re-opening shows blank pages because cache thinks pages are rendered
+  pdfRenderedPages[slot].clear();
+  
+  // Disconnect old observer if exists
+  if (pdfScrollObservers[slot]) {
+    pdfScrollObservers[slot].disconnect();
+    pdfScrollObservers[slot] = null;
+  }
+  
   // Safety check for totalPages
   if (!totalPages || totalPages <= 0 || totalPages > 5000 || isNaN(totalPages)) {
     console.error("PDF scroll mode: invalid totalPages", totalPages);
@@ -1987,6 +2317,10 @@ async function renderPdfScrollMode(slot) {
   scrollContent.dataset.containerWidth = containerWidth;
   scrollContent.dataset.baseScale = baseScale;
   
+  // Store the ORIGINAL render scale - this is our quality baseline
+  // We'll always render at at least this scale to maintain quality in split view
+  scrollContent.dataset.originalRenderScale = baseScale.toString();
+  
   // CRITICAL: Store base PAGE dimensions for zoom calculations
   scrollContent.dataset.basePageWidth = estimatedPageWidth.toString();
   scrollContent.dataset.basePageHeight = estimatedPageHeight.toString();
@@ -2025,11 +2359,6 @@ async function renderPdfScrollMode(slot) {
     pagePlaceholder.appendChild(loadingDiv);
     
     scrollContent.appendChild(pagePlaceholder);
-  }
-  
-  // Disconnect old observer if exists
-  if (pdfScrollObservers[slot]) {
-    pdfScrollObservers[slot].disconnect();
   }
   
   // Create Intersection Observer to detect visible pages
@@ -2087,47 +2416,58 @@ async function renderPageIfNeeded(slot, pageNum) {
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1 });
     
-    // Get stored container width and scale
-    const containerWidth = parseFloat(scrollContent.dataset.containerWidth) || 600;
+    // Get stored scales and base dimensions
     const baseScale = parseFloat(scrollContent.dataset.baseScale) || 1;
-    const scaledViewport = page.getViewport({ scale: baseScale });
+    const originalRenderScale = parseFloat(scrollContent.dataset.originalRenderScale) || baseScale;
+    const basePageWidth = parseFloat(scrollContent.dataset.basePageWidth) || viewport.width * baseScale;
+    const basePageHeight = parseFloat(scrollContent.dataset.basePageHeight) || viewport.height * baseScale;
     
-    // Get actual rendered dimensions (should match placeholder)
-    const placeholderWidth = parseFloat(placeholder.style.width);
-    const placeholderHeight = parseFloat(placeholder.style.height);
+    // Get current zoom at render start (for render quality)
+    const zoomAtRenderStart = slot === 1 ? pdfZoom1 : pdfZoom2;
     
-    // Create canvas at the exact size we'll display
+    // Render at high resolution for quality (accounting for potential zoom)
+    // Always render at least at original scale, or higher if zoomed in
+    const renderScale = Math.max(baseScale, originalRenderScale) * Math.max(1, zoomAtRenderStart);
+    const renderViewport = page.getViewport({ scale: renderScale });
+    
+    // Create canvas at HIGH resolution
     const canvas = document.createElement('canvas');
-    // Use device pixel ratio for crisp rendering
     const pixelRatio = window.devicePixelRatio || 1;
-    canvas.width = scaledViewport.width * pixelRatio;
-    canvas.height = scaledViewport.height * pixelRatio;
-    
-    // Set display size to match placeholder exactly
+    canvas.width = renderViewport.width * pixelRatio;
+    canvas.height = renderViewport.height * pixelRatio;
     canvas.style.display = 'block';
-    canvas.style.width = `${scaledViewport.width}px`;
-    canvas.style.height = `${scaledViewport.height}px`;
     canvas.style.margin = '0';
     
     // Render page at high resolution
     const context = canvas.getContext('2d');
     context.scale(pixelRatio, pixelRatio);
-    await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
+    await page.render({ canvasContext: context, viewport: renderViewport }).promise;
     
-    // Update placeholder to match actual rendered size (in case page dimensions differ)
-    const actualWidth = scaledViewport.width;
-    const actualHeight = scaledViewport.height;
-    placeholder.style.width = `${actualWidth}px`;
-    placeholder.style.height = `${actualHeight}px`;
-    placeholder.style.minHeight = `${actualHeight}px`;
-    placeholder.style.maxHeight = `${actualHeight}px`;
+    // CRITICAL: Re-read current zoom AFTER async render completes
+    // Zoom may have changed while we were rendering
+    const finalZoom = slot === 1 ? pdfZoom1 : pdfZoom2;
+    
+    // Calculate final display size using base dimensions * current zoom
+    // This ensures we match other pages that were resized by setZoom
+    const finalWidth = basePageWidth * finalZoom;
+    const finalHeight = basePageHeight * finalZoom;
+    
+    // Set canvas display size
+    canvas.style.width = `${finalWidth}px`;
+    canvas.style.height = `${finalHeight}px`;
+    
+    // Update placeholder to match
+    placeholder.style.width = `${finalWidth}px`;
+    placeholder.style.height = `${finalHeight}px`;
+    placeholder.style.minHeight = `${finalHeight}px`;
+    placeholder.style.maxHeight = `${finalHeight}px`;
     
     // Replace placeholder content with canvas
     placeholder.innerHTML = '';
     placeholder.appendChild(canvas);
     placeholder.className = 'pdf-scroll-page';
     placeholder.dataset.rendered = 'true';
-    placeholder.dataset.renderedAtZoom = '1'; // Initial render is at 1.0x zoom
+    placeholder.dataset.renderedAtZoom = finalZoom.toString();
     
     // Store in cache
     renderedPages.set(pageNum, canvas);
@@ -2190,9 +2530,17 @@ async function recalculatePdfScrollMode(slot) {
   const newPageWidth = scaledViewport.width;
   const newPageHeight = scaledViewport.height;
   
-  // Store new dimensions
+  // Store new dimensions for DISPLAY (not render quality)
   scrollContent.dataset.containerWidth = containerWidth;
   scrollContent.dataset.baseScale = newBaseScale;
+  
+  // PRESERVE the original render scale - don't lower quality in split view
+  // If originalRenderScale doesn't exist or new scale is higher, update it
+  const existingOriginalScale = parseFloat(scrollContent.dataset.originalRenderScale) || 0;
+  if (newBaseScale > existingOriginalScale) {
+    scrollContent.dataset.originalRenderScale = newBaseScale.toString();
+  }
+  // Otherwise keep the existing (higher) original scale for quality
   
   // CRITICAL: Store base PAGE dimensions for zoom calculations
   scrollContent.dataset.basePageWidth = newPageWidth.toString();
@@ -2505,7 +2853,9 @@ async function reRenderVisiblePagesAtZoom(slot) {
       const page = await pdf.getPage(pageNum);
       
       // Render at the zoomed scale for crisp text
-      const renderScale = baseScale * currentZoom;
+      // Use originalRenderScale to maintain quality in split view
+      const originalRenderScale = parseFloat(scrollContent.dataset.originalRenderScale) || baseScale;
+      const renderScale = Math.max(baseScale, originalRenderScale) * currentZoom;
       const viewport = page.getViewport({ scale: renderScale });
       
       // Create new canvas at high resolution
@@ -2697,9 +3047,38 @@ async function loadTOC(bookInstance, renditionInstance, listId) {
 // TTS LOGIC
 // -------------------------------------------------------
 async function getCurrentChapterText(renditionInstance) {
-  const contents = renditionInstance.getContents()[0];
-  if (!contents) return "";
-  return contents.document.body.innerText;
+  // Try to get contents from the rendition
+  let contents = renditionInstance.getContents()[0];
+  
+  // If no contents, wait a bit and try again (content might still be loading)
+  if (!contents) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    contents = renditionInstance.getContents()[0];
+  }
+  
+  // Still no contents? Try alternative method via current location
+  if (!contents) {
+    try {
+      const location = renditionInstance.currentLocation();
+      if (location?.start?.href) {
+        // Try to get text directly from the spine item
+        const book = renditionInstance.book;
+        const spine = book.spine;
+        const item = spine.get(location.start.href);
+        if (item) {
+          const doc = await item.load(book.load.bind(book));
+          const text = doc.body?.innerText || doc.body?.textContent || "";
+          item.unload();
+          return text;
+        }
+      }
+    } catch (err) {
+      console.warn("Alternative text extraction failed:", err);
+    }
+    return "";
+  }
+  
+  return contents.document.body.innerText || "";
 }
 
 function splitTextIntoChunks(text, maxTokens = 1000) {
@@ -2722,13 +3101,28 @@ function splitTextIntoChunks(text, maxTokens = 1000) {
   return chunks;
 }
 
+// TTS Loading indicator
+const ttsLoadingEl = document.getElementById("ttsLoading");
+
+function showTTSLoading() {
+  if (ttsLoadingEl) {
+    ttsLoadingEl.classList.add("visible");
+  }
+}
+
+function hideTTSLoading() {
+  if (ttsLoadingEl) {
+    ttsLoadingEl.classList.remove("visible");
+  }
+}
+
 async function playChapterTTS(text, key, voice) {
   ttsChunks = splitTextIntoChunks(text);
   currentChunkIndex = 0;
   isAborted = false;
   isPaused = false;
   ttsAbortController = { aborted: false };
-
+  
   for (let i = 0; i < ttsChunks.length; i++) {
     // Check if aborted
     if (isAborted || ttsAbortController.aborted || !isPlaying) {
@@ -2749,12 +3143,19 @@ async function playChapterTTS(text, key, voice) {
     const chunk = ttsChunks[i];
     
     try {
+    // Show loading indicator while fetching audio
+    showTTSLoading();
+    
     const base64Audio = await window.electronAPI.requestTTS(chunk, key, voice);
-    if (!base64Audio) continue;
+    if (!base64Audio) {
+      hideTTSLoading();
+      continue;
+    }
 
       await new Promise((resolve, reject) => {
         // Check if aborted before creating audio
         if (isAborted || ttsAbortController.aborted || !isPlaying) {
+          hideTTSLoading();
           resolve();
           return;
         }
@@ -2764,6 +3165,9 @@ async function playChapterTTS(text, key, voice) {
         // Apply speech speed from settings
         const speechSpeed = parseFloat(document.getElementById("speechSpeed")?.value) || 1.0;
         currentAudio.playbackRate = speechSpeed;
+        
+        // Apply volume from settings
+        currentAudio.volume = ttsVolume;
         
         let checkInterval = null;
         
@@ -2789,12 +3193,18 @@ async function playChapterTTS(text, key, voice) {
 
         const playPromise = currentAudio.play();
         if (playPromise !== undefined) {
-          playPromise.catch(err => {
+          playPromise.then(() => {
+            // Audio started playing - hide loading indicator
+            hideTTSLoading();
+          }).catch(err => {
             console.error("Play error:", err);
+            hideTTSLoading();
             cleanup();
             currentAudio = null;
             resolve();
           });
+        } else {
+          hideTTSLoading();
         }
 
         // Check for abort/pause during playback
@@ -2833,6 +3243,8 @@ async function playChapterTTS(text, key, voice) {
     currentAudio.pause();
     currentAudio = null;
   }
+  
+  
   ttsChunks = [];
   currentChunkIndex = 0;
 }
@@ -2867,7 +3279,7 @@ function resumeTTS() {
 // Abort/Stop TTS completely
 function abortTTS() {
   isAborted = true;
-    isPlaying = false;
+  isPlaying = false;
   isPaused = false;
   if (ttsAbortController) {
     ttsAbortController.aborted = true;
@@ -2877,6 +3289,8 @@ function abortTTS() {
     currentAudio.currentTime = 0;
     currentAudio = null;
   }
+  
+  hideTTSLoading();
   ttsChunks = [];
   currentChunkIndex = 0;
   updateTTSButtonState();
@@ -3099,6 +3513,39 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// Volume control
+const ttsVolumeSlider = document.getElementById("ttsVolume");
+if (ttsVolumeSlider) {
+  // Load saved volume
+  const savedVolume = localStorage.getItem("tts_volume");
+  if (savedVolume) {
+    ttsVolume = parseFloat(savedVolume);
+    ttsVolumeSlider.value = Math.round(ttsVolume * 100);
+  }
+  
+  // Update volume when slider changes
+  ttsVolumeSlider.addEventListener("input", (e) => {
+    ttsVolume = parseInt(e.target.value) / 100;
+    localStorage.setItem("tts_volume", ttsVolume.toString());
+    
+    // Apply to current audio if playing
+    if (currentAudio) {
+      currentAudio.volume = ttsVolume;
+    }
+    
+    // Also update chapter audio volume slider if it exists
+    const chapterVolumeSlider = document.getElementById("chapterAudioVolume");
+    if (chapterVolumeSlider) {
+      chapterVolumeSlider.value = Math.round(ttsVolume * 100);
+    }
+    
+    // Apply to chapter audio if playing
+    if (chapterAudio) {
+      chapterAudio.volume = ttsVolume;
+    }
+  });
+}
+
 recordBtn?.addEventListener("click", () => {
   // Close the popup
   voicePopup?.classList.remove("open");
@@ -3306,11 +3753,17 @@ async function recordSpecificChapter(folderPath, apiKey, voice, chapterIndex) {
   try {
     // Navigate to chapter and get text
     await rendition1.display(chapter.href);
-    await new Promise(r => setTimeout(r, 500)); // Wait for render
+    await new Promise(r => setTimeout(r, 800)); // Wait for render
     
-    const text = await getChapterText(book1, chapter.href);
+    // Use getCurrentChapterText since we just navigated to this chapter
+    let text = await getCurrentChapterText(rendition1);
     if (!text || text.trim().length < 10) {
-      throw new Error("Chapter has no text content");
+      // Try alternate method if first fails
+      console.warn("First text extraction attempt returned empty, trying alternate...");
+      text = await getChapterText(book1, chapter.href);
+      if (!text || text.trim().length < 10) {
+        throw new Error("Chapter has no text content");
+      }
     }
     
     // Process chapter in chunks - save each separately
@@ -3422,9 +3875,14 @@ async function recordAllChapters(folderPath, apiKey, voice) {
     try {
       // Navigate to chapter and get text
       await rendition1.display(chapter.href);
-      await new Promise(r => setTimeout(r, 500)); // Wait for render
+      await new Promise(r => setTimeout(r, 800)); // Wait for render
       
-      const text = await getChapterText(book1, chapter.href);
+      // Use getCurrentChapterText since we just navigated to this chapter
+      let text = await getCurrentChapterText(rendition1);
+      if (!text || text.trim().length < 10) {
+        // Try alternate method
+        text = await getChapterText(book1, chapter.href);
+      }
       if (!text || text.trim().length < 10) {
         console.warn(`Skipping empty chapter: ${chapter.label}`);
         continue;
@@ -3478,8 +3936,25 @@ async function recordAllChapters(folderPath, apiKey, voice) {
 async function getChapterText(bookInstance, href) {
   try {
     const spine = bookInstance.spine;
-    const item = spine.get(href);
-    if (!item) return "";
+    
+    // Try to find the item in the spine
+    let item = spine.get(href);
+    
+    // If not found directly, try finding by partial match
+    if (!item) {
+      const hrefBase = href.split('#')[0];
+      for (const spineItem of spine.items) {
+        if (spineItem.href === hrefBase || spineItem.href.includes(hrefBase) || hrefBase.includes(spineItem.href)) {
+          item = spineItem;
+          break;
+        }
+      }
+    }
+    
+    if (!item) {
+      console.warn("Could not find spine item for href:", href);
+      return "";
+    }
     
     const doc = await item.load(bookInstance.load.bind(bookInstance));
     const text = doc.body?.innerText || doc.body?.textContent || "";
@@ -3615,6 +4090,14 @@ function playNextAudioPart() {
   // Load audio file
   chapterAudio = new Audio(`file://${audioPath}`);
   
+  // Apply volume from slider
+  const volumeSlider = document.getElementById("chapterAudioVolume");
+  if (volumeSlider) {
+    chapterAudio.volume = parseInt(volumeSlider.value) / 100;
+  } else {
+    chapterAudio.volume = ttsVolume;
+  }
+  
   chapterAudio.onended = () => {
     chapterAudioIndex++;
     playNextAudioPart();
@@ -3660,23 +4143,68 @@ function showAudioPlayer() {
     player = document.createElement("div");
     player.id = "chapter-audio-player";
     player.innerHTML = `
-      <button id="audio-play-pause" title="Play/Pause">
-        <i class="fas fa-pause"></i>
-      </button>
+      <div class="audio-buttons">
+        <button id="audio-play-pause" class="voice-option" title="Play/Pause">
+          <i class="fas fa-pause"></i>
+        </button>
+        <button id="audio-stop" class="voice-option" title="Stop">
+          <i class="fas fa-stop"></i>
+        </button>
+      </div>
       <div class="audio-progress-info">
         <span id="audio-part-info">Part 1 of 1</span>
       </div>
-      <button id="audio-stop" title="Stop">
-        <i class="fas fa-stop"></i>
-      </button>
+      <div class="voice-volume">
+        <i class="fas fa-volume-down"></i>
+        <input type="range" id="chapterAudioVolume" min="0" max="100" value="100" title="Volume">
+        <i class="fas fa-volume-up"></i>
+      </div>
     `;
     document.getElementById("reader-page").appendChild(player);
     
     document.getElementById("audio-play-pause").addEventListener("click", toggleChapterAudioPlayback);
     document.getElementById("audio-stop").addEventListener("click", stopChapterAudio);
+    
+    // Volume control for chapter audio - sync with main TTS volume
+    const chapterVolumeSlider = document.getElementById("chapterAudioVolume");
+    if (chapterVolumeSlider) {
+      // Load saved volume (same as main TTS volume)
+      chapterVolumeSlider.value = Math.round(ttsVolume * 100);
+      
+      // Update volume when slider changes
+      chapterVolumeSlider.addEventListener("input", (e) => {
+        const volume = parseInt(e.target.value) / 100;
+        ttsVolume = volume;
+        localStorage.setItem("tts_volume", volume.toString());
+        
+        // Apply to chapter audio if playing
+        if (chapterAudio) {
+          chapterAudio.volume = volume;
+        }
+        
+        // Also update main TTS volume slider if it exists
+        const mainVolumeSlider = document.getElementById("ttsVolume");
+        if (mainVolumeSlider) {
+          mainVolumeSlider.value = Math.round(volume * 100);
+        }
+        
+        // Apply to current TTS audio if playing
+        if (currentAudio) {
+          currentAudio.volume = volume;
+        }
+      });
+    }
   }
   player.classList.add("visible");
   updateAudioPlayerUI();
+  
+  // Apply current volume to audio if playing
+  if (chapterAudio) {
+    const volumeSlider = document.getElementById("chapterAudioVolume");
+    if (volumeSlider) {
+      chapterAudio.volume = parseInt(volumeSlider.value) / 100;
+    }
+  }
 }
 
 function hideAudioPlayer() {
@@ -4059,6 +4587,179 @@ function goToHighlight(id) {
   highlightsModal.style.display = "none";
 }
 
+// Export Highlights to PDF
+document.getElementById("exportHighlightsPdfBtn")?.addEventListener("click", async () => {
+  await exportHighlightsToPdf();
+});
+
+async function exportHighlightsToPdf() {
+  const book = library.find(b => b.path === currentBookPath1);
+  if (!book) {
+    alert("No book loaded.");
+    return;
+  }
+  
+  const highlights = book.highlights || [];
+  if (highlights.length === 0) {
+    alert("No highlights to export.");
+    return;
+  }
+  
+  // Group highlights by chapter
+  const byChapter = {};
+  highlights.forEach(hl => {
+    const chapter = hl.chapter || "Unknown Chapter";
+    if (!byChapter[chapter]) byChapter[chapter] = [];
+    byChapter[chapter].push(hl);
+  });
+  
+  // Sort each chapter's highlights by creation time
+  Object.values(byChapter).forEach(arr => {
+    arr.sort((a, b) => a.createdAt - b.createdAt);
+  });
+  
+  // Build HTML
+  const title = book.title || "Book Notes";
+  const author = book.author || "";
+  
+  let html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Georgia', 'Times New Roman', serif;
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 40px 30px;
+      color: #333;
+      line-height: 1.6;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding-bottom: 30px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+    .header h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      color: #1a1a1a;
+    }
+    .header .author {
+      font-size: 16px;
+      color: #666;
+      font-style: italic;
+    }
+    .header .export-date {
+      font-size: 12px;
+      color: #999;
+      margin-top: 12px;
+    }
+    .chapter {
+      margin-bottom: 35px;
+    }
+    .chapter h2 {
+      font-size: 18px;
+      color: #2c3e50;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 8px;
+      margin-bottom: 20px;
+    }
+    .highlight {
+      margin-bottom: 20px;
+      padding-left: 16px;
+      border-left: 4px solid #ddd;
+    }
+    .highlight-text {
+      font-size: 15px;
+      color: #444;
+      font-style: italic;
+      margin-bottom: 8px;
+      quotes: '"' '"';
+    }
+    .highlight-text::before { content: open-quote; }
+    .highlight-text::after { content: close-quote; }
+    .highlight-note {
+      font-size: 14px;
+      color: #555;
+      background: #f8f9fa;
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-top: 8px;
+    }
+    .highlight-note::before {
+      content: "Note: ";
+      font-weight: 600;
+      color: #666;
+    }
+    .stats {
+      text-align: center;
+      font-size: 12px;
+      color: #999;
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>${escapeHtml(title)}</h1>
+    ${author ? `<p class="author">by ${escapeHtml(author)}</p>` : ''}
+    <p class="export-date">Exported on ${new Date().toLocaleDateString('en-US', { 
+      year: 'numeric', month: 'long', day: 'numeric' 
+    })}</p>
+  </div>
+`;
+
+  // Add chapters and highlights
+  for (const [chapter, chapterHighlights] of Object.entries(byChapter)) {
+    html += `
+  <div class="chapter">
+    <h2>${escapeHtml(chapter)}</h2>
+`;
+    for (const hl of chapterHighlights) {
+      html += `
+    <div class="highlight" style="border-left-color: ${hl.color};">
+      <p class="highlight-text">${escapeHtml(hl.text)}</p>
+      ${hl.note ? `<div class="highlight-note">${escapeHtml(hl.note)}</div>` : ''}
+    </div>
+`;
+    }
+    html += `  </div>\n`;
+  }
+  
+  const noteCount = highlights.filter(h => h.note).length;
+  html += `
+  <div class="stats">
+    ${highlights.length} highlight${highlights.length !== 1 ? 's' : ''} &bull; 
+    ${noteCount} note${noteCount !== 1 ? 's' : ''} &bull; 
+    ${Object.keys(byChapter).length} chapter${Object.keys(byChapter).length !== 1 ? 's' : ''}
+  </div>
+</body>
+</html>
+`;
+
+  try {
+    const result = await window.electronAPI.exportNotesPdf(title, html);
+    if (result) {
+      highlightsModal.style.display = "none";
+    }
+  } catch (err) {
+    console.error("Export failed:", err);
+    alert("Failed to export PDF. Please try again.");
+  }
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 async function deleteHighlight(id) {
   const book = library.find(b => b.path === currentBookPath1);
   if (!book?.highlights) return;
@@ -4094,11 +4795,19 @@ function editHighlightNote(id) {
 }
 
 // Text Selection Handler for Highlights
+let selectionTimeout = null;
+
 function setupHighlightSelection(rendition, slot) {
   if (slot !== 1) return; // Only handle slot 1 for now
   
   rendition.on("selected", (cfiRange, contents) => {
     if (viewerType1 !== 'epub') return;
+    
+    // Clear any pending hide timeout
+    if (selectionTimeout) {
+      clearTimeout(selectionTimeout);
+      selectionTimeout = null;
+    }
     
     const selection = contents.window.getSelection();
     const text = selection.toString().trim();
@@ -4112,6 +4821,8 @@ function setupHighlightSelection(rendition, slot) {
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
     const iframe = document.querySelector("#viewer iframe");
+    if (!iframe) return;
+    
     const iframeRect = iframe.getBoundingClientRect();
     
     // Store pending highlight info
@@ -4121,32 +4832,85 @@ function setupHighlightSelection(rendition, slot) {
       chapter: getCurrentChapterName()
     };
     
-    // Position and show tooltip
+    // Position and show tooltip at TOP of selection
     const tooltipX = iframeRect.left + rect.left + (rect.width / 2);
-    const tooltipY = iframeRect.top + rect.top - 10;
+    const tooltipY = iframeRect.top + rect.top;
     
     showHighlightTooltip(tooltipX, tooltipY);
   });
   
-  // Hide tooltip when clicking elsewhere
+  // Hide tooltip when clicking elsewhere (but not if there's still a selection)
   rendition.on("click", () => {
-    setTimeout(() => {
+    selectionTimeout = setTimeout(() => {
+      // Check if there's still an active selection in the iframe
+      const iframe = document.querySelector("#viewer iframe");
+      if (iframe) {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        const selection = iframeDoc?.getSelection();
+        if (selection && selection.toString().trim().length > 0) {
+          return; // Don't hide if text is still selected
+        }
+      }
+      
+      // Check if hovering over tooltip
       if (!document.querySelector(".highlight-tooltip:hover")) {
         hideHighlightTooltip();
       }
-    }, 100);
+    }, 200);
   });
 }
 
 function showHighlightTooltip(x, y) {
-  highlightTooltip.style.display = "flex";
+  // Clear any pending hide
+  if (selectionTimeout) {
+    clearTimeout(selectionTimeout);
+    selectionTimeout = null;
+  }
+  
+  // Reset styles first
+  highlightTooltip.style.transform = "";
+  highlightTooltip.style.marginTop = "";
+  
+  // Position tooltip above the selection
   highlightTooltip.style.left = `${x}px`;
   highlightTooltip.style.top = `${y}px`;
-  highlightTooltip.style.transform = "translate(-50%, -100%)";
+  highlightTooltip.style.display = "flex";
+  
+  // Re-trigger animation
+  highlightTooltip.style.animation = 'none';
+  void highlightTooltip.offsetHeight; // Trigger reflow
+  highlightTooltip.style.animation = '';
+  
+  // Ensure tooltip stays within viewport after it's visible
+  requestAnimationFrame(() => {
+    const rect = highlightTooltip.getBoundingClientRect();
+    let newX = x;
+    let newY = y;
+    
+    // Horizontal adjustments
+    if (rect.left < 10) {
+      newX = 10 + rect.width / 2;
+    } else if (rect.right > window.innerWidth - 10) {
+      newX = window.innerWidth - 10 - rect.width / 2;
+    }
+    
+    // If tooltip goes off the top, show below selection instead
+    if (rect.top < 10) {
+      highlightTooltip.style.transform = "translate(-50%, 10px)";
+      highlightTooltip.style.marginTop = "0";
+      newY = y + 30;
+    }
+    
+    highlightTooltip.style.left = `${newX}px`;
+    highlightTooltip.style.top = `${newY}px`;
+  });
 }
 
 function hideHighlightTooltip() {
   highlightTooltip.style.display = "none";
+  // Reset any modified styles
+  highlightTooltip.style.transform = "";
+  highlightTooltip.style.marginTop = "";
   pendingHighlight = null;
 }
 
@@ -4190,7 +4954,10 @@ highlightTooltip?.querySelectorAll(".highlight-color").forEach(btn => {
 document.getElementById("addNoteBtn")?.addEventListener("click", () => {
   if (!pendingHighlight) return;
   
-  document.getElementById("notePreviewText").textContent = pendingHighlight.text;
+  // Save the pending highlight data before hiding tooltip
+  const highlightData = { ...pendingHighlight };
+  
+  document.getElementById("notePreviewText").textContent = highlightData.text;
   document.getElementById("noteTextarea").value = '';
   
   // Reset color selection
@@ -4199,7 +4966,14 @@ document.getElementById("addNoteBtn")?.addEventListener("click", () => {
   });
   selectedHighlightColor = "#ffeb3b";
   
-  hideHighlightTooltip();
+  // Hide tooltip WITHOUT clearing pendingHighlight
+  highlightTooltip.style.display = "none";
+  highlightTooltip.style.transform = "";
+  highlightTooltip.style.marginTop = "";
+  
+  // Restore the highlight data for the note modal
+  pendingHighlight = highlightData;
+  
   noteModal.style.display = "flex";
 });
 
@@ -4208,7 +4982,8 @@ document.getElementById("copyTextBtn")?.addEventListener("click", async () => {
   if (!pendingHighlight) return;
   
   try {
-    await navigator.clipboard.writeText(pendingHighlight.text);
+    const textToCopy = pendingHighlight.text;
+    await navigator.clipboard.writeText(textToCopy);
     hideHighlightTooltip();
     // Could show a toast notification here
   } catch (err) {
@@ -4227,27 +5002,34 @@ document.querySelectorAll(".note-color").forEach(btn => {
 
 // Save note
 document.getElementById("save-note-btn")?.addEventListener("click", async () => {
-  if (!pendingHighlight) return;
+  if (!pendingHighlight) {
+    console.error("No pending highlight data");
+    return;
+  }
   
   const note = document.getElementById("noteTextarea").value.trim();
   
-  if (pendingHighlight.editMode) {
-    // Update existing highlight
-    await updateHighlightNote(pendingHighlight.id, note, selectedHighlightColor);
-  } else {
-    // Create new highlight with note
-    await createHighlight(pendingHighlight.cfi, pendingHighlight.text, selectedHighlightColor, note, pendingHighlight.chapter);
-  }
-  
-  noteModal.style.display = "none";
-  pendingHighlight = null;
-  
-  // Clear selection
-  if (rendition1) {
-    const contents = rendition1.getContents()[0];
-    if (contents) {
-      contents.window.getSelection().removeAllRanges();
+  try {
+    if (pendingHighlight.editMode) {
+      // Update existing highlight
+      await updateHighlightNote(pendingHighlight.id, note, selectedHighlightColor);
+    } else {
+      // Create new highlight with note
+      await createHighlight(pendingHighlight.cfi, pendingHighlight.text, selectedHighlightColor, note, pendingHighlight.chapter);
     }
+    
+    noteModal.style.display = "none";
+    pendingHighlight = null;
+    
+    // Clear selection
+    if (rendition1) {
+      const contents = rendition1.getContents()[0];
+      if (contents) {
+        contents.window.getSelection().removeAllRanges();
+      }
+    }
+  } catch (err) {
+    console.error("Error saving highlight:", err);
   }
 });
 
@@ -4323,10 +5105,22 @@ function loadHighlightsForBook(bookPath) {
   
   // Wait for rendition to be ready
   setTimeout(() => {
-    book.highlights.forEach(highlight => {
-      applyHighlightToRendition(highlight);
-    });
-  }, 500);
+    try {
+      book.highlights.forEach(highlight => {
+        // Try to remove old highlight first (in case it exists from previous render)
+        // This prevents duplicates when re-applying after resize/column changes
+        try {
+          rendition1.annotations.remove(highlight.cfi, "highlight");
+        } catch (e) {
+          // Ignore if highlight doesn't exist - that's fine
+        }
+        // Apply highlight (CFI is stable across column/layout changes)
+        applyHighlightToRendition(highlight);
+      });
+    } catch (err) {
+      console.warn("Error loading highlights:", err);
+    }
+  }, 100);
 }
 
 // -------------------------------------------------------
@@ -4399,16 +5193,47 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Hide highlight tooltip when clicking elsewhere
-document.addEventListener("click", (e) => {
-  if (!e.target.closest(".highlight-tooltip") && !e.target.closest("#viewer")) {
-    hideHighlightTooltip();
-  }
+// Hide highlight tooltip when clicking elsewhere (with delay to allow selection to complete)
+document.addEventListener("mousedown", (e) => {
+  // Don't hide if clicking on the tooltip itself
+  if (e.target.closest(".highlight-tooltip")) return;
+  
+  // Don't hide if clicking in a modal (note modal needs pendingHighlight)
+  if (e.target.closest(".modal")) return;
+  
+  // Don't immediately hide if clicking in the viewer (selection might be happening)
+  if (e.target.closest("#viewer") || e.target.closest("#viewer-2")) return;
+  
+  // Hide if clicking elsewhere
+  hideHighlightTooltip();
 });
 
-// Handle window resize for PDF
+// Handle window resize for PDF and EPUB
+let resizeTimeout = null;
 window.addEventListener('resize', () => {
-  if (viewerType1 === 'pdf') renderPdfPage(1);
-  if (viewerType2 === 'pdf') renderPdfPage(2);
-  hideHighlightTooltip();
+  // Debounce resize handling
+  if (resizeTimeout) clearTimeout(resizeTimeout);
+  
+  resizeTimeout = setTimeout(() => {
+    // Handle PDF resize
+    if (viewerType1 === 'pdf') renderPdfPage(1);
+    if (viewerType2 === 'pdf') renderPdfPage(2);
+    
+    // Handle EPUB resize - recalculate TTS highlighting if active and re-apply highlights
+    if (viewerType1 === 'epub' && rendition1) {
+      rendition1.resize();
+      // Re-apply highlights after window resize
+      if (currentBookPath1) {
+        setTimeout(() => {
+          loadHighlightsForBook(currentBookPath1);
+        }, 250);
+      }
+    }
+    
+    if (viewerType2 === 'epub' && rendition2) {
+      rendition2.resize();
+    }
+    
+    hideHighlightTooltip();
+  }, 150);
 });

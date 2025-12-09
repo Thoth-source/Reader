@@ -1,45 +1,131 @@
 const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const fetch = require("node-fetch"); // make sure installed
 
 let store;
-
-// Initialize electron-store dynamically
-(async () => {
+let mainWindow;
+async function initStore() {
   try {
     const { default: Store } = await import("electron-store");
     store = new Store();
-    console.log("Electron Store initialized successfully");
   } catch (err) {
     console.error("Failed to initialize electron-store:", err);
   }
-})();
+}
+async function ensureStoreReady() {
+  if (store) return;
+  await initStore();
+}
 
 function createWindow() {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1100,
     height: 800,
-    autoHideMenuBar: true, // Hide menu bar, press Alt to show
+    show: false,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
-      webSecurity: false,
-      allowRunningInsecureContent: true,
+      webSecurity: true,
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false // Explicitly disable sandbox to ensure preload works
+      sandbox: false
     }
   });
 
-  win.loadFile(path.join(__dirname, "renderer", "index.html"));
+  mainWindow.once("ready-to-show", () => {
+    try { mainWindow.center(); } catch {}
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+
+  mainWindow.on("unresponsive", () => {
+    dialog.showErrorBox("Window Unresponsive", "The renderer process is not responding.");
+  });
+  mainWindow.webContents.on("did-fail-load", (e, code, desc) => {
+    dialog.showErrorBox("Load Failed", (desc || "") + " (" + code + ")");
+  });
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
+    dialog.showErrorBox("Renderer Crashed", (details && details.reason) ? details.reason : "unknown");
+  });
 }
 
-app.whenReady().then(() => {
+// Handle "Open With" - files opened via command line or file association
+let pendingFileToOpen = null;
+
+// macOS: Handle files opened via "Open With"
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  
+  // If window is already created and ready, send the file immediately
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.send("open-file", filePath);
+  } else {
+    // Store for later - will be sent when window is ready
+    pendingFileToOpen = filePath;
+  }
+});
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  // Windows/Linux: Handle files passed as command-line arguments when app is already running
+  app.on("second-instance", (event, commandLine, workingDirectory) => {
+    // Focus existing window
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      try { mainWindow.center(); } catch {}
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      createWindow();
+    }
+    
+    // Check for file paths in command line arguments
+    const filePaths = commandLine.slice(1).filter(arg => {
+      const lower = arg.toLowerCase();
+      return lower.endsWith('.epub') || lower.endsWith('.pdf');
+    });
+    
+    if (filePaths.length > 0 && mainWindow) {
+      // Send first file to open
+      mainWindow.webContents.send("open-file", filePaths[0]);
+    }
+  });
+}
+
+app.whenReady().then(async () => {
+  await initStore();
+  prepareCachePath();
   createWindow();
 
   app.on("activate", function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+  
+  // Determine file to open on startup (macOS pending or Windows/Linux command-line)
+  let fileToOpen = pendingFileToOpen;
+  
+  if (!fileToOpen) {
+    // Check for file paths in command-line arguments (Windows/Linux)
+    const filePaths = process.argv.slice(1).filter(arg => {
+      const lower = arg.toLowerCase();
+      return lower.endsWith('.epub') || lower.endsWith('.pdf');
+    });
+    if (filePaths.length > 0) {
+      fileToOpen = filePaths[0];
+    }
+  }
+  
+  // Send file to open after window is ready (if any)
+  if (fileToOpen && mainWindow) {
+    mainWindow.webContents.once("did-finish-load", () => {
+      mainWindow.webContents.send("open-file", fileToOpen);
+    });
+    pendingFileToOpen = null; // Clear pending file
+  }
 });
 
 app.on("window-all-closed", function () {
@@ -48,18 +134,12 @@ app.on("window-all-closed", function () {
 
 // ------------------- Library Persistence -------------------
 ipcMain.handle("library-get", async () => {
-  if (!store) {
-    console.warn("Store not ready yet for library-get");
-    return [];
-  }
+  await ensureStoreReady();
   return store.get("library", []);
 });
 
 ipcMain.handle("library-add", async (event, bookMeta) => {
-  if (!store) {
-    console.error("Store not ready yet for library-add");
-    return [];
-  }
+  await ensureStoreReady();
   let library = store.get("library", []);
   const existingIndex = library.findIndex((b) => b.path === bookMeta.path);
   
@@ -76,7 +156,7 @@ ipcMain.handle("library-add", async (event, bookMeta) => {
 });
 
 ipcMain.handle("library-remove", async (event, bookPath) => {
-  if (!store) return [];
+  await ensureStoreReady();
   let library = store.get("library", []);
   library = library.filter((b) => b.path !== bookPath);
   store.set("library", library);
@@ -215,3 +295,38 @@ ipcMain.handle("generate-tts-chunk", async (event, { text, apiKey, voice }) => {
     return { success: false, error: err.message };
   }
 });
+
+ipcMain.handle("export-notes-pdf", async (event, { title, html }) => {
+  try {
+    const result = await dialog.showSaveDialog({
+      title: "Export Notes PDF",
+      defaultPath: `${(title || "Notes").replace(/[/\\?%*:|"<>]/g, "_")}.pdf`,
+      filters: [{ name: "PDF", extensions: ["pdf"] }]
+    });
+    if (result.canceled || !result.filePath) {
+      return { success: false, error: "canceled" };
+    }
+    const win = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, sandbox: true } });
+    const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+    await win.loadURL(dataUrl);
+    const pdfBuffer = await win.webContents.printToPDF({ printBackground: true, pageSize: "A4" });
+    await fs.promises.writeFile(result.filePath, pdfBuffer);
+    win.destroy();
+    return { success: true, path: result.filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+// Reduce cache-related failures on restricted environments
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+
+function prepareCachePath() {
+  try {
+    const userData = app.getPath('userData');
+    const cachePath = path.join(userData, 'Cache');
+    fs.mkdirSync(cachePath, { recursive: true });
+    app.setPath('cache', cachePath);
+  } catch (e) {
+    console.error('Failed to prepare cache path:', e);
+  }
+}

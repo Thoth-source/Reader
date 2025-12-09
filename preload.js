@@ -21,4 +21,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   generateTtsChunk: (text, apiKey, voice) =>
     ipcRenderer.invoke("generate-tts-chunk", { text, apiKey, voice }),
   checkAudioFileExists: (filePath) => ipcRenderer.invoke("check-audio-file-exists", filePath),
+  exportNotesPdf: (title, html) => ipcRenderer.invoke("export-notes-pdf", { title, html }),
+  
+  // Open With - listen for files opened via command line or file association
+  onOpenFile: (callback) => {
+    ipcRenderer.on("open-file", (event, filePath) => callback(filePath));
+  }
 });
