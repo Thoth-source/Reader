@@ -132,15 +132,179 @@ app.on("window-all-closed", function () {
   if (process.platform !== "darwin") app.quit();
 });
 
-// ------------------- Library Persistence -------------------
-ipcMain.handle("library-get", async () => {
+// ------------------- Library Persistence (Multi-Library Support) -------------------
+
+// Helper function to migrate old single-library data to new multi-library format
+function migrateToMultiLibrary() {
+  const oldLibrary = store.get("library");
+  const libraries = store.get("libraries");
+  
+  // If we have old format data and no new format, migrate
+  if (Array.isArray(oldLibrary) && oldLibrary.length > 0 && !libraries) {
+    store.set("libraries", {
+      "Default": oldLibrary
+    });
+    store.set("currentLibrary", "Default");
+    store.delete("library"); // Clean up old format
+    console.log("Migrated library data to multi-library format");
+  }
+  
+  // Ensure we have at least a Default library
+  if (!store.get("libraries")) {
+    store.set("libraries", { "Default": [] });
+  }
+  if (!store.get("currentLibrary")) {
+    store.set("currentLibrary", "Default");
+  }
+}
+
+// Get current library name
+ipcMain.handle("library-get-current-name", async () => {
   await ensureStoreReady();
-  return store.get("library", []);
+  migrateToMultiLibrary();
+  return store.get("currentLibrary", "Default");
 });
 
+// Get all library names
+ipcMain.handle("library-get-all-names", async () => {
+  await ensureStoreReady();
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", { "Default": [] });
+  return Object.keys(libraries);
+});
+
+// Switch to a different library
+ipcMain.handle("library-switch", async (event, libraryName) => {
+  await ensureStoreReady();
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", {});
+  if (libraries[libraryName]) {
+    store.set("currentLibrary", libraryName);
+    return { success: true, library: libraries[libraryName] };
+  }
+  return { success: false, error: "Library not found" };
+});
+
+// Create a new library
+ipcMain.handle("library-create", async (event, libraryName) => {
+  await ensureStoreReady();
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", {});
+  
+  if (libraries[libraryName]) {
+    return { success: false, error: "Library already exists" };
+  }
+  
+  libraries[libraryName] = [];
+  store.set("libraries", libraries);
+  return { success: true, names: Object.keys(libraries) };
+});
+
+// Rename a library
+ipcMain.handle("library-rename", async (event, { oldName, newName }) => {
+  await ensureStoreReady();
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", {});
+  
+  if (!libraries[oldName]) {
+    return { success: false, error: "Library not found" };
+  }
+  if (libraries[newName]) {
+    return { success: false, error: "A library with that name already exists" };
+  }
+  
+  libraries[newName] = libraries[oldName];
+  delete libraries[oldName];
+  store.set("libraries", libraries);
+  
+  // Update currentLibrary if it was the renamed one
+  if (store.get("currentLibrary") === oldName) {
+    store.set("currentLibrary", newName);
+  }
+  
+  return { success: true, names: Object.keys(libraries), currentLibrary: store.get("currentLibrary") };
+});
+
+// Delete a library
+ipcMain.handle("library-delete", async (event, libraryName) => {
+  await ensureStoreReady();
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", {});
+  
+  if (!libraries[libraryName]) {
+    return { success: false, error: "Library not found" };
+  }
+  
+  // Can't delete the last library
+  if (Object.keys(libraries).length <= 1) {
+    return { success: false, error: "Cannot delete the last library" };
+  }
+  
+  delete libraries[libraryName];
+  store.set("libraries", libraries);
+  
+  // If current library was deleted, switch to first available
+  let currentLibrary = store.get("currentLibrary");
+  if (currentLibrary === libraryName) {
+    currentLibrary = Object.keys(libraries)[0];
+    store.set("currentLibrary", currentLibrary);
+  }
+  
+  return { success: true, names: Object.keys(libraries), currentLibrary };
+});
+
+// Move a book to another library
+ipcMain.handle("library-move-book", async (event, { bookPath, targetLibrary }) => {
+  await ensureStoreReady();
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", {});
+  const currentLibrary = store.get("currentLibrary", "Default");
+  
+  if (!libraries[targetLibrary]) {
+    return { success: false, error: "Target library not found" };
+  }
+  
+  // Find the book in current library
+  const bookIndex = libraries[currentLibrary].findIndex(b => b.path === bookPath);
+  if (bookIndex < 0) {
+    return { success: false, error: "Book not found in current library" };
+  }
+  
+  // Move the book
+  const book = libraries[currentLibrary][bookIndex];
+  libraries[currentLibrary].splice(bookIndex, 1);
+  
+  // Check if book already exists in target library
+  const targetIndex = libraries[targetLibrary].findIndex(b => b.path === bookPath);
+  if (targetIndex < 0) {
+    libraries[targetLibrary].push(book);
+  }
+  
+  store.set("libraries", libraries);
+  return { success: true, library: libraries[currentLibrary] };
+});
+
+// Get books from current library
+ipcMain.handle("library-get", async () => {
+  await ensureStoreReady();
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", { "Default": [] });
+  const currentLibrary = store.get("currentLibrary", "Default");
+  return libraries[currentLibrary] || [];
+});
+
+// Add book to current library
 ipcMain.handle("library-add", async (event, bookMeta) => {
   await ensureStoreReady();
-  let library = store.get("library", []);
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", { "Default": [] });
+  const currentLibrary = store.get("currentLibrary", "Default");
+  
+  if (!libraries[currentLibrary]) {
+    libraries[currentLibrary] = [];
+  }
+  
+  let library = libraries[currentLibrary];
   const existingIndex = library.findIndex((b) => b.path === bookMeta.path);
   
   if (existingIndex >= 0) {
@@ -151,15 +315,22 @@ ipcMain.handle("library-add", async (event, bookMeta) => {
     library.push(bookMeta);
   }
   
-  store.set("library", library);
+  libraries[currentLibrary] = library;
+  store.set("libraries", libraries);
   return library;
 });
 
+// Remove book from current library
 ipcMain.handle("library-remove", async (event, bookPath) => {
   await ensureStoreReady();
-  let library = store.get("library", []);
+  migrateToMultiLibrary();
+  const libraries = store.get("libraries", { "Default": [] });
+  const currentLibrary = store.get("currentLibrary", "Default");
+  
+  let library = libraries[currentLibrary] || [];
   library = library.filter((b) => b.path !== bookPath);
-  store.set("library", library);
+  libraries[currentLibrary] = library;
+  store.set("libraries", libraries);
   return library;
 });
 
@@ -313,6 +484,61 @@ ipcMain.handle("export-notes-pdf", async (event, { title, html }) => {
     await fs.promises.writeFile(result.filePath, pdfBuffer);
     win.destroy();
     return { success: true, path: result.filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Export highlights to Markdown (Obsidian format)
+ipcMain.handle("export-notes-markdown", async (event, { title, content }) => {
+  try {
+    const result = await dialog.showSaveDialog({
+      title: "Export Notes to Markdown",
+      defaultPath: `${(title || "Notes").replace(/[/\\?%*:|"<>]/g, "_")}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }]
+    });
+    if (result.canceled || !result.filePath) {
+      return { success: false, error: "canceled" };
+    }
+    await fs.promises.writeFile(result.filePath, content, 'utf-8');
+    return { success: true, path: result.filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Export reading positions
+ipcMain.handle("export-reading-positions", async (event, { data }) => {
+  try {
+    const result = await dialog.showSaveDialog({
+      title: "Export Reading Positions",
+      defaultPath: `reader-positions-${new Date().toISOString().split('T')[0]}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }]
+    });
+    if (result.canceled || !result.filePath) {
+      return { success: false, error: "canceled" };
+    }
+    await fs.promises.writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf-8');
+    return { success: true, path: result.filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Import reading positions
+ipcMain.handle("import-reading-positions", async () => {
+  try {
+    const result = await dialog.showOpenDialog({
+      title: "Import Reading Positions",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+      properties: ['openFile']
+    });
+    if (result.canceled || !result.filePaths.length) {
+      return { success: false, error: "canceled" };
+    }
+    const content = await fs.promises.readFile(result.filePaths[0], 'utf-8');
+    const data = JSON.parse(content);
+    return { success: true, data };
   } catch (err) {
     return { success: false, error: err.message };
   }

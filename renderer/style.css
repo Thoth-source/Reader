@@ -305,6 +305,36 @@ body {
   color: white;
 }
 
+/* Viewer 2 controls in bottom bar */
+.viewer2-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.viewer2-controls.hidden {
+  display: none;
+}
+
+.viewer2-divider {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+  margin: 0 8px;
+}
+
+.viewer2-controls .nav-btn {
+  padding: 6px 10px;
+}
+
+.viewer2-controls .nav-btn i {
+  font-size: 14px;
+}
+
+.viewer2-controls .nav-btn span {
+  font-size: 9px;
+}
+
 /* ============================================
    MODAL
    ============================================ */
@@ -367,6 +397,7 @@ body {
   font-size: 14px;
   background: var(--bg-primary);
   color: var(--text-primary);
+  caret-color: var(--text-primary);
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
@@ -429,6 +460,7 @@ body {
   align-items: center;
   margin-bottom: 24px;
   padding: 24px 48px 0;
+  gap: 16px;
 }
 
 .lib-header h2 { 
@@ -436,12 +468,365 @@ body {
   color: var(--text-primary);
   font-size: 1.75rem;
   font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* Library Switcher Dropdown */
+.library-title-row {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.library-switcher {
+  position: relative;
+}
+
+.library-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 1.2rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.library-switcher-btn:hover {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.library-switcher-btn i.fa-layer-group {
+  color: var(--accent);
+}
+
+.library-switcher-btn .chevron {
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.library-switcher.open .library-switcher-btn .chevron {
+  transform: rotate(180deg);
+}
+
+.library-switcher-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 220px;
+  margin-top: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  display: none;
+  overflow: hidden;
+}
+
+.library-switcher.open .library-switcher-menu {
+  display: block;
+  animation: dropdownSlide 0.2s ease;
+}
+
+@keyframes dropdownSlide {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.library-switcher-menu .library-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.library-switcher-menu .library-menu-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.library-switcher-menu .library-menu-item.active {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.library-switcher-menu .library-menu-item i {
+  width: 16px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.library-switcher-menu .library-menu-item.active i {
+  color: var(--accent);
+}
+
+.library-switcher-menu .library-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.library-switcher-menu .library-menu-item.manage-btn {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.library-switcher-menu .library-menu-item.manage-btn:hover {
+  color: var(--accent);
+}
+
+/* Library Settings Panel Styles */
+.library-selector-row {
+  display: flex;
+  gap: 8px;
+}
+
+.library-selector-row select {
+  flex: 1;
+}
+
+.create-library-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.create-library-row input {
+  flex: 1;
+}
+
+.btn-icon-accent {
+  background: var(--accent);
+  color: white;
+  border: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.btn-icon-accent:hover {
+  background: var(--accent-hover);
+  transform: scale(1.05);
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+}
+
+.library-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  transition: all 0.2s;
+}
+
+.library-list-item:hover {
+  border-color: var(--accent);
+}
+
+.library-list-item.current {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-primary));
+}
+
+.library-list-item .lib-icon {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.library-list-item .lib-name {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.library-list-item .lib-count {
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.library-list-item .lib-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.library-list-item:hover .lib-actions {
+  opacity: 1;
+}
+
+.library-list-item .lib-action-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.library-list-item .lib-action-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.library-list-item .lib-action-btn.delete:hover {
+  color: #e74c3c;
+  background: rgba(231, 76, 60, 0.1);
+}
+
+/* Move book to library dropdown in options menu */
+.move-to-library-submenu {
+  position: relative;
+}
+
+.move-library-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.move-library-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.move-library-option:hover {
+  background: var(--bg-tertiary);
+}
+
+.move-library-option i {
+  color: var(--text-muted);
+  width: 14px;
+}
+
+.lib-search-container {
+  flex: 1;
+  max-width: 400px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.lib-search-container i.fa-search {
+  position: absolute;
+  left: 14px;
+  color: var(--text-muted);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.lib-search-container input {
+  width: 100%;
+  padding: 10px 36px 10px 40px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.lib-search-container input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.lib-search-container input::placeholder {
+  color: var(--text-muted);
+}
+
+.lib-search-container .search-clear {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 12px;
+  transition: color 0.2s;
+}
+
+.lib-search-container .search-clear:hover {
+  color: var(--text-primary);
 }
 
 .lib-actions {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-shrink: 0;
+}
+
+#searchAnnotationsBtn {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+#searchAnnotationsBtn:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
 }
 
 #add-book-btn {
@@ -807,6 +1192,66 @@ body {
   margin: 4px 0;
 }
 
+/* Move to library submenu */
+.option-move-library {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.option-move-library:hover {
+  background: var(--accent-light);
+}
+
+.option-move-library i:first-child {
+  width: 14px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.move-library-submenu {
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  margin: 4px 8px;
+  padding: 4px 0;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.move-library-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.move-library-option:hover {
+  background: var(--bg-primary);
+}
+
+.move-library-option i {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
 /* Empty library message */
 .empty-msg {
   grid-column: 1 / -1;
@@ -900,12 +1345,17 @@ body {
 .toc-section.hidden { display: none; }
 
 .toc-label {
-  padding: 12px 24px 8px;
+  padding: 12px 16px 8px;
   font-size: 11px;
   text-transform: uppercase;
   color: var(--text-muted);
   letter-spacing: 1.5px;
   font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  z-index: 11;
+  margin: 0;
 }
 
 .small-btn {
@@ -938,6 +1388,26 @@ body {
 [data-theme="dark"] .small-btn:hover {
   background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
   box-shadow: 0 4px 12px rgba(96, 165, 250, 0.3);
+}
+
+/* Sidebar buttons for viewer 2 */
+.toc-2-buttons {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px 12px;
+  position: sticky;
+  top: 32px; /* Below the toc-label */
+  background: var(--bg-secondary);
+  z-index: 10;
+  border-bottom: 1px solid var(--border);
+}
+
+.toc-2-buttons .small-btn {
+  flex: 1;
+  margin: 0;
+  width: auto;
+  padding: 8px 12px;
+  font-size: 12px;
 }
 
 #chapters, #chapters-2 {
@@ -988,6 +1458,10 @@ body {
 #chapters li .chapter-title, #chapters-2 li .chapter-title {
   flex: 1;
   cursor: pointer;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chapter-audio-btn {
@@ -1249,6 +1723,56 @@ body {
 [data-theme="dark"] .viewer-placeholder button:hover {
   background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 50%, #2563eb 100%);
   box-shadow: 0 4px 15px rgba(96, 165, 250, 0.4);
+}
+
+/* Viewer 2 Options */
+.viewer-2-options {
+  display: flex;
+  gap: 12px;
+}
+
+.viewer-placeholder .viewer-option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 28px;
+  background: var(--bg-primary);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.viewer-placeholder .viewer-option-btn i {
+  font-size: 24px;
+  color: var(--accent);
+}
+
+.viewer-placeholder .viewer-option-btn span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.viewer-placeholder .viewer-option-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(91, 164, 230, 0.3);
+}
+
+.viewer-placeholder .viewer-option-btn:hover i,
+.viewer-placeholder .viewer-option-btn:hover span {
+  color: white;
+}
+
+[data-theme="sepia"] .viewer-placeholder .viewer-option-btn:hover {
+  box-shadow: 0 4px 12px rgba(139, 105, 20, 0.3);
+}
+
+[data-theme="dark"] .viewer-placeholder .viewer-option-btn:hover {
+  box-shadow: 0 4px 12px rgba(96, 165, 250, 0.3);
 }
 
 /* Page Buttons */
@@ -2473,15 +2997,92 @@ body {
 }
 
 /* ============================================
-   PDF CANVAS
+   PDF CANVAS & TEXT LAYER
    ============================================ */
+.pdf-container {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
 .pdf-canvas {
-  flex: 1;
+  display: block;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
   /* Page turn animation setup */
   transform-style: preserve-3d;
+  position: relative;
+  z-index: 1;
+}
+
+/* PDF Highlight Layer - sits between canvas and text layer */
+.pdf-highlight-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Scroll mode highlight layer */
+.pdf-scroll-highlight-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
+.pdf-highlight-rect {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 2px;
+  mix-blend-mode: multiply;
+}
+
+/* PDF Text Layer */
+.pdf-text-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: hidden;
+  line-height: 1.0;
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  z-index: 2;
+}
+
+.pdf-text-layer > span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  transform-origin: 0% 0%;
+  cursor: text;
+  pointer-events: auto;
+}
+
+.pdf-text-layer > span::selection {
+  background: rgba(0, 120, 215, 0.3);
+}
+
+.pdf-text-layer > span::-moz-selection {
+  background: rgba(0, 120, 215, 0.3);
+}
+
+/* Scroll mode text layer - positioned relative to each page */
+.pdf-scroll-text-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: auto;
+  transform-origin: 0 0;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 
@@ -2502,6 +3103,67 @@ body {
 .pdf-pages .pdf-page-item:hover {
   background: var(--accent-light);
   color: var(--accent-dark);
+}
+
+/* PDF Outline Nested Items */
+.pdf-outline-nested {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pdf-outline-nested:hover {
+  color: var(--accent-dark);
+}
+
+/* PDF Paged Mode Controls */
+.pdf-paged-controls {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pdf-paged-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  box-shadow: var(--shadow-lg);
+  transition: all 0.2s ease;
+}
+
+.pdf-paged-note-btn {
+  background: var(--accent);
+  color: white;
+}
+
+.pdf-paged-note-btn:hover {
+  transform: scale(1.1);
+  background: var(--accent-dark);
+}
+
+.pdf-paged-delete-hl-btn {
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.pdf-paged-delete-hl-btn:hover {
+  transform: scale(1.1);
+  background: #dc3545;
+  color: white;
+  border-color: #dc3545;
+}
+  border-left: 2px solid var(--border);
+  margin-left: 12px;
 }
 
 /* ============================================
@@ -2598,6 +3260,56 @@ body {
   color: var(--text-primary);
   min-width: 50px;
   text-align: center;
+}
+
+.zoom-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.page-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.page-input {
+  width: 40px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  padding: 0 4px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.page-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.page-input:hover {
+  border-color: var(--accent);
+}
+
+.page-separator {
+  font-size: 14px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.page-total {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 20px;
 }
 
 /* Hide page buttons in scroll mode */
@@ -3023,10 +3735,13 @@ body {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
 }
 
-.highlights-modal-content .btn-primary {
-  width: 100%;
+.highlights-modal-content .btn-primary,
+.highlights-modal-content .btn-secondary {
+  flex: 1;
   padding: 12px 20px;
   border: none;
   border-radius: 10px;
@@ -3037,9 +3752,18 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.highlights-modal-content .btn-primary {
   background: var(--accent);
   color: white;
-  transition: all 0.2s ease;
+}
+
+.highlights-modal-content .btn-secondary {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
 }
 
 .highlights-modal-content .btn-primary:hover {
@@ -3047,10 +3771,153 @@ body {
   transform: translateY(-1px);
 }
 
-.highlights-modal-content .btn-primary:disabled {
+.highlights-modal-content .btn-secondary:hover {
+  background: var(--bg-secondary);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.highlights-modal-content .btn-primary:disabled,
+.highlights-modal-content .btn-secondary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
+}
+
+/* Annotations Search Modal */
+.annotations-search-modal-content {
+  width: 600px;
+  max-height: 80vh;
+}
+
+.search-input-container {
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.search-input-container i.fa-search {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.search-input-container input {
+  width: 100%;
+  padding: 12px 16px 12px 42px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 15px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.search-input-container input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.annotations-search-results {
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.annotations-placeholder {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.annotation-result-item {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.annotation-result-item:last-child {
+  border-bottom: none;
+}
+
+.annotation-result-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.annotation-result-book {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.annotation-result-text {
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+.annotation-result-text mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+
+.annotation-result-note {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--accent);
+}
+
+.annotation-result-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+/* Button group for settings */
+.btn-group-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.btn-group-row button {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.btn-group-row button:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
 }
 
 .highlights-list {
@@ -3236,6 +4103,185 @@ body {
 }
 
 /* ============================================
+   PDF HIGHLIGHT TOOLTIP (simpler version)
+   ============================================ */
+.pdf-highlight-tooltip {
+  position: fixed;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  z-index: 1000;
+  transform: translate(-50%, -100%);
+  margin-top: -8px;
+  animation: tooltipFadeIn 0.12s ease forwards;
+}
+
+.pdf-highlight-tooltip::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 6px solid var(--bg-primary);
+}
+
+.pdf-hl-color {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.pdf-hl-color:hover {
+  transform: scale(1.15);
+  border-color: rgba(0, 0, 0, 0.25);
+}
+
+.pdf-hl-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.pdf-hl-action {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.12s;
+}
+
+.pdf-hl-action:hover {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+/* ============================================
+   HIGHLIGHT CONTEXT MENU
+   ============================================ */
+.highlight-context-menu {
+  position: fixed;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  z-index: 10001;
+  transform: translate(-50%, -100%) translateY(-12px);
+  animation: tooltipFadeIn 0.15s ease-out;
+}
+
+.highlight-context-menu::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid var(--bg-primary);
+}
+
+.highlight-context-menu.below {
+  transform: translate(-50%, 0) translateY(20px);
+}
+
+.highlight-context-menu.below::after {
+  bottom: auto;
+  top: -8px;
+  border-top: none;
+  border-bottom: 8px solid var(--bg-primary);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: none;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.context-menu-item i {
+  font-size: 12px;
+}
+
+.context-menu-item:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.context-menu-item.delete {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+}
+
+.context-menu-item.delete:hover {
+  background: #dc3545;
+  color: white;
+}
+
+/* PDF Highlight Context Menu Buttons */
+.context-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 14px;
+  transition: all 0.15s;
+}
+
+.context-menu-btn:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.context-menu-btn[data-action="delete"] {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+}
+
+.context-menu-btn[data-action="delete"]:hover {
+  background: #dc3545;
+  color: white;
+}
+
+
+/* ============================================
    NOTE MODAL
    ============================================ */
 .note-modal-content {
@@ -3290,12 +4336,14 @@ body {
   box-sizing: border-box;
   background: var(--bg-primary);
   color: var(--text-primary);
+  caret-color: var(--text-primary);
 }
 
 #noteTextarea:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-light);
+  caret-color: var(--text-primary);
 }
 
 /* ============================================
@@ -3357,4 +4405,680 @@ body {
    EPUB HIGHLIGHT STYLES (injected into iframe)
    ============================================ */
 /* These styles will be applied dynamically */
+
+/* ============================================
+   NOTES SYSTEM STYLES
+   ============================================ */
+
+/* Notes badge on book cards */
+.book-notes-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--accent);
+  color: white;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  z-index: 10;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+/* Add to Notes Modal */
+.add-to-notes-modal-content {
+  max-width: 550px;
+  padding: 30px;
+}
+
+.quote-preview {
+  background: var(--bg-secondary);
+  border-left: 4px solid var(--accent);
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.quote-preview blockquote {
+  margin: 0;
+  font-style: italic;
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.quote-preview .quote-meta {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quote-preview .quote-meta i {
+  opacity: 0.6;
+}
+
+#quoteComment {
+  width: 100%;
+  min-height: 100px;
+  padding: 14px;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  font-size: 14px;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#quoteComment:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+/* ============================================
+   NOTES VIEWER (renders in viewer slot)
+   ============================================ */
+
+.notes-viewer {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+/* When viewer contains notes, remove padding */
+.epub-viewer:has(.notes-viewer) {
+  padding: 0 !important;
+}
+
+.notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.notes-book-info {
+  flex: 1;
+}
+
+.notes-book-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 2px 0;
+}
+
+.notes-book-author {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.notes-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.notes-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.notes-actions button:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.notes-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* Chapter sections in notes */
+.notes-chapter {
+  margin-bottom: 16px;
+}
+
+.notes-chapter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+}
+
+.notes-chapter-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notes-chapter-title i {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.notes-chapter-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+/* Notes Entry - Text Editor Style */
+.notes-entry {
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.notes-entry:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.notes-entry.editing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+/* Quote section */
+.notes-entry-quote {
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-tertiary));
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  transition: background 0.2s;
+}
+
+.notes-entry-quote:hover {
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-tertiary));
+}
+
+.notes-quote-icon {
+  color: var(--accent);
+  font-size: 11px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.notes-quote-content {
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+/* PDF Note Page Link */
+.notes-pdf-page-link {
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-tertiary));
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  transition: background 0.2s;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.notes-pdf-page-link:hover {
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-tertiary));
+}
+
+.notes-pdf-page-link i {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* PDF Note Button in Zoom Controls */
+.pdf-note-btn {
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg-secondary)) !important;
+  color: var(--accent) !important;
+}
+
+.pdf-note-btn:hover {
+  background: var(--accent) !important;
+  color: white !important;
+}
+
+.pdf-delete-hl-scroll-btn {
+  background: transparent !important;
+  color: var(--text-muted) !important;
+}
+
+.pdf-delete-hl-scroll-btn:hover {
+  background: #dc3545 !important;
+  color: white !important;
+}
+
+/* Editor section */
+.notes-entry-editor {
+  padding: 0;
+}
+
+.notes-textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: none;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: 'Georgia', 'Times New Roman', serif;
+  resize: none;
+  overflow: hidden;
+}
+
+.notes-textarea:focus {
+  outline: none;
+  background: var(--bg-primary);
+  caret-color: var(--text-primary);
+}
+
+.notes-textarea::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Entry footer */
+.notes-entry-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.notes-entry-date {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notes-delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  opacity: 0;
+  transition: all 0.2s;
+}
+
+.notes-entry:hover .notes-delete-btn,
+.notes-freeform-entry:hover .notes-delete-btn {
+  opacity: 1;
+}
+
+.notes-delete-btn:hover {
+  background: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
+}
+
+/* Chapter Summary section */
+.notes-chapter-summary {
+  margin-top: 10px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.notes-chapter-summary.editing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.notes-chapter-summary-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-tertiary));
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.notes-chapter-summary-header i {
+  font-size: 11px;
+}
+
+.notes-summary-textarea {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: none;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: 'Georgia', 'Times New Roman', serif;
+  resize: none;
+  overflow: hidden;
+}
+
+.notes-summary-textarea:focus {
+  outline: none;
+  caret-color: var(--text-primary);
+}
+
+.notes-summary-textarea::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Add freeform note button */
+
+/* Freeform notes - Text Editor Style */
+.notes-freeform-entry {
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.notes-freeform-entry:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.notes-freeform-entry.editing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.notes-freeform-textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: none;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: 'Georgia', 'Times New Roman', serif;
+  resize: none;
+  overflow: hidden;
+}
+
+.notes-freeform-textarea:focus {
+  outline: none;
+  caret-color: var(--text-primary);
+}
+
+.notes-freeform-textarea::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.notes-general-section {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 2px solid var(--border);
+}
+
+/* Empty state */
+.notes-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px;
+}
+
+.notes-empty i {
+  font-size: 64px;
+  margin-bottom: 20px;
+  opacity: 0.3;
+}
+
+.notes-empty h3 {
+  font-size: 20px;
+  margin: 0 0 8px 0;
+  color: var(--text-secondary);
+}
+
+.notes-empty p {
+  font-size: 14px;
+  margin: 0;
+  max-width: 300px;
+  line-height: 1.6;
+}
+
+/* Notes viewer in reader toolbar */
+.notes-toolbar-btn {
+  background: var(--accent);
+  color: white !important;
+}
+
+.notes-toolbar-btn:hover {
+  background: var(--accent-hover) !important;
+}
+
+/* Notes indicator in chapter list */
+.toc-item-notes {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* ============================================
+   KEYBOARD SHORTCUTS MODAL
+   ============================================ */
+.shortcuts-modal-content {
+  width: 700px;
+  max-width: 95vw;
+  max-height: 85vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.shortcuts-body {
+  overflow-y: auto;
+  padding: 0 8px 8px 8px;
+}
+
+.shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 24px;
+}
+
+.shortcuts-section {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.shortcuts-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shortcuts-section h4 i {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcut-row:last-child {
+  border-bottom: none;
+}
+
+.shortcut-row kbd {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  min-width: 20px;
+  text-align: center;
+}
+
+.shortcut-row span {
+  color: var(--text-secondary);
+  text-align: right;
+  flex: 1;
+  margin-left: 12px;
+}
+
+/* ============================================
+   GO TO PAGE DIALOG
+   ============================================ */
+.goto-page-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10000;
+  animation: gotoPageFadeIn 0.15s ease;
+}
+
+@keyframes gotoPageFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.goto-page-content {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  text-align: center;
+  min-width: 200px;
+}
+
+.goto-page-content label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.goto-page-input-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#goto-page-input {
+  width: 80px;
+  padding: 10px 12px;
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+  -moz-appearance: textfield;
+}
+
+#goto-page-input::-webkit-outer-spin-button,
+#goto-page-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+#goto-page-input:focus {
+  border-color: var(--accent);
+}
+
+.goto-page-total {
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+.goto-page-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 12px;
+}
 

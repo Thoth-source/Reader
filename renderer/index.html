@@ -58,6 +58,7 @@
     
     <div class="settings-tabs">
       <button class="settings-tab active" data-tab="general">General</button>
+      <button class="settings-tab" data-tab="libraries">Libraries</button>
       <button class="settings-tab" data-tab="reading">Reading</button>
       <button class="settings-tab" data-tab="voice">Voice</button>
     </div>
@@ -93,6 +94,50 @@
           <input type="checkbox" id="confirmDelete" checked />
           Confirm before removing books
         </label>
+      </div>
+      
+      <div class="input-group">
+        <label>Reading Position Sync</label>
+        <div class="btn-group-row">
+          <button id="exportPositionsBtn" class="btn-secondary">
+            <i class="fas fa-download"></i> Export
+          </button>
+          <button id="importPositionsBtn" class="btn-secondary">
+            <i class="fas fa-upload"></i> Import
+          </button>
+        </div>
+        <small class="input-hint">Backup or restore your reading positions</small>
+      </div>
+    </div>
+    
+    <!-- Libraries Settings -->
+    <div class="settings-panel" id="settings-libraries">
+      <div class="input-group">
+        <label>Current Library</label>
+        <div class="library-selector-row">
+          <select id="librarySelectSettings">
+            <!-- Library options will be populated dynamically -->
+          </select>
+        </div>
+        <small class="input-hint">Switch between your libraries</small>
+      </div>
+      
+      <div class="input-group">
+        <label>Create New Library</label>
+        <div class="create-library-row">
+          <input type="text" id="newLibraryName" placeholder="Enter library name..." />
+          <button id="createLibraryBtn" class="btn-icon-accent" title="Create Library">
+            <i class="fas fa-plus"></i>
+          </button>
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label>Manage Libraries</label>
+        <div id="libraryList" class="library-list">
+          <!-- Library items will be populated dynamically -->
+        </div>
+        <small class="input-hint">Rename or delete libraries. Books will be deleted with the library.</small>
       </div>
     </div>
     
@@ -301,6 +346,26 @@
       <button id="exportHighlightsPdfBtn" class="btn-primary">
         <i class="fas fa-file-pdf"></i> Export to PDF
       </button>
+      <button id="exportHighlightsMdBtn" class="btn-secondary">
+        <i class="fas fa-file-alt"></i> Export to Obsidian
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ANNOTATIONS SEARCH MODAL -->
+<div id="annotations-search-modal" class="modal" style="display:none;">
+  <div class="modal-content annotations-search-modal-content">
+    <span class="close-modal">&times;</span>
+    <h3><i class="fas fa-search"></i> Search Annotations</h3>
+    
+    <div class="search-input-container">
+      <i class="fas fa-search"></i>
+      <input type="text" id="annotationsSearchInput" placeholder="Search highlights and notes across all books..." />
+    </div>
+    
+    <div class="annotations-search-results" id="annotationsSearchResults">
+      <p class="annotations-placeholder">Enter a search term to find highlights and notes across your library.</p>
     </div>
   </div>
 </div>
@@ -313,8 +378,67 @@
   <button class="highlight-color" data-color="#f44336" style="background: #f44336;" title="Red"></button>
   <button class="highlight-color" data-color="#9c27b0" style="background: #9c27b0;" title="Purple"></button>
   <div class="highlight-divider"></div>
-  <button class="highlight-action" id="addNoteBtn" title="Add Note"><i class="fas fa-sticky-note"></i></button>
+  <button class="highlight-action" id="addNoteBtn" title="Add with Comment"><i class="fas fa-comment-dots"></i></button>
   <button class="highlight-action" id="copyTextBtn" title="Copy Text"><i class="fas fa-copy"></i></button>
+</div>
+
+<!-- PDF HIGHLIGHT TOOLTIP (simpler, appears on PDF text selection) -->
+<div id="pdf-highlight-tooltip" class="pdf-highlight-tooltip" style="display:none;">
+  <button class="pdf-hl-color" data-color="#ffeb3b" style="background: #ffeb3b;" title="Yellow"></button>
+  <button class="pdf-hl-color" data-color="#4caf50" style="background: #4caf50;" title="Green"></button>
+  <button class="pdf-hl-color" data-color="#2196f3" style="background: #2196f3;" title="Blue"></button>
+  <button class="pdf-hl-color" data-color="#f44336" style="background: #f44336;" title="Red"></button>
+  <div class="pdf-hl-divider"></div>
+  <button class="pdf-hl-action" id="pdfCopyTextBtn" title="Copy Text"><i class="fas fa-copy"></i></button>
+</div>
+
+<!-- GO TO PAGE DIALOG (appears on G key press) -->
+<div id="goto-page-dialog" class="goto-page-dialog" style="display:none;">
+  <div class="goto-page-content">
+    <label>Go to page</label>
+    <div class="goto-page-input-wrapper">
+      <input type="number" id="goto-page-input" min="1" placeholder="Page">
+      <span class="goto-page-total">/ <span id="goto-page-total">1</span></span>
+    </div>
+    <div class="goto-page-hint">Press Enter to go, Esc to cancel</div>
+  </div>
+</div>
+
+<!-- HIGHLIGHT CONTEXT MENU (appears when clicking existing highlight) -->
+<div id="highlight-context-menu" class="highlight-context-menu" style="display:none;">
+  <button id="highlight-goto-notes" class="context-menu-item">
+    <i class="fas fa-sticky-note"></i>
+    <span>Go to Notes</span>
+  </button>
+  <button id="highlight-delete" class="context-menu-item delete">
+    <i class="fas fa-trash"></i>
+    <span>Delete</span>
+  </button>
+</div>
+
+<!-- NOTES VIEWER (renders in viewer slot) -->
+<div id="notes-viewer-template" style="display:none;">
+  <div class="notes-viewer">
+    <div class="notes-header">
+      <div class="notes-book-info">
+        <h2 class="notes-book-title"></h2>
+        <p class="notes-book-author"></p>
+      </div>
+      <div class="notes-actions">
+        <button class="notes-export-btn" title="Export Notes"><i class="fas fa-download"></i></button>
+      </div>
+    </div>
+    
+    <div class="notes-content">
+      <!-- Chapters and quotes will be rendered here -->
+    </div>
+    
+    <div class="notes-add-freeform">
+      <button class="add-freeform-note-btn">
+        <i class="fas fa-plus"></i> Add General Note
+      </button>
+    </div>
+  </div>
 </div>
 
 <!-- NOTE INPUT MODAL -->
@@ -432,8 +556,27 @@
 <!-- LIBRARY PAGE -->
 <div id="library-page">
   <div class="lib-header">
-    <h2>My Library</h2>
+    <div class="library-title-row">
+      <div class="library-switcher">
+        <button id="librarySwitcherBtn" class="library-switcher-btn">
+          <i class="fas fa-layer-group"></i>
+          <span id="currentLibraryName">My Library</span>
+          <i class="fas fa-chevron-down chevron"></i>
+        </button>
+        <div class="library-switcher-menu" id="librarySwitcherMenu">
+          <!-- Library options will be populated dynamically -->
+        </div>
+      </div>
+    </div>
+    <div class="lib-search-container">
+      <i class="fas fa-search"></i>
+      <input type="text" id="librarySearchInput" placeholder="Search library..." />
+      <button id="librarySearchClear" class="search-clear" style="display:none;">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
     <div class="lib-actions">
+      <button id="searchAnnotationsBtn" title="Search Annotations"><i class="fas fa-sticky-note"></i></button>
       <button id="add-book-btn"><i class="fas fa-plus"></i> Import</button>
       <button id="settings-btn-lib"><i class="fas fa-cog"></i></button>
     </div>
@@ -497,8 +640,11 @@
         <div id="pdf-pages-1" class="pdf-pages" style="display:none;"></div>
       </div>
       <div class="toc-section hidden" id="toc-2">
-        <h4 class="toc-label">Book 2</h4>
-        <button id="load-book-2-btn" class="small-btn"><i class="fas fa-book"></i> Select Book</button>
+        <h4 class="toc-label">Viewer 2</h4>
+        <div class="toc-2-buttons">
+          <button id="load-book-2-btn" class="small-btn"><i class="fas fa-book"></i> Book</button>
+          <button id="show-notes-2-btn" class="small-btn"><i class="fas fa-sticky-note"></i> Notes</button>
+        </div>
         <ul id="chapters-2"></ul>
         <div id="pdf-pages-2" class="pdf-pages" style="display:none;"></div>
       </div>
@@ -508,7 +654,15 @@
       <div id="viewer-wrapper-1" class="viewer-wrapper">
         <button id="prev-btn-1" class="page-btn prev-btn" title="Previous Page"><i class="fas fa-chevron-left"></i></button>
         <div id="viewer" class="epub-viewer"></div>
-        <canvas id="pdf-viewer-1" class="pdf-canvas" style="display:none;"></canvas>
+        <div id="pdf-container-1" class="pdf-container" style="display:none;">
+          <canvas id="pdf-viewer-1" class="pdf-canvas"></canvas>
+          <div id="pdf-highlight-layer-1" class="pdf-highlight-layer"></div>
+          <div id="pdf-text-layer-1" class="pdf-text-layer"></div>
+          <div class="pdf-paged-controls">
+            <button class="pdf-paged-btn pdf-paged-note-btn" id="pdf-paged-note-1" title="Add Note to Page"><i class="fas fa-sticky-note"></i></button>
+            <button class="pdf-paged-btn pdf-paged-delete-hl-btn" id="pdf-delete-hl-1" title="Delete Page Highlights"><i class="fas fa-eraser"></i></button>
+          </div>
+        </div>
         <div id="pdf-scroll-1" class="pdf-scroll-container" style="display:none;">
           <div class="pdf-scroll-content" id="pdf-scroll-content-1"></div>
         </div>
@@ -517,6 +671,15 @@
           <span class="zoom-level" id="zoom-level-1">100%</span>
           <button class="zoom-btn" id="zoom-in-1" title="Zoom In"><i class="fas fa-plus"></i></button>
           <button class="zoom-btn" id="zoom-fit-1" title="Fit to Width"><i class="fas fa-arrows-alt-h"></i></button>
+          <span class="zoom-divider"></span>
+          <div class="page-indicator">
+            <input type="text" class="page-input" id="page-input-1" value="1" title="Go to page">
+            <span class="page-separator">/</span>
+            <span class="page-total" id="page-total-1">1</span>
+          </div>
+          <span class="zoom-divider"></span>
+          <button class="zoom-btn pdf-note-btn" id="pdf-add-note-1" title="Add Note to Page"><i class="fas fa-sticky-note"></i></button>
+          <button class="zoom-btn pdf-delete-hl-scroll-btn" id="pdf-delete-hl-scroll-1" title="Delete Page Highlights"><i class="fas fa-eraser"></i></button>
         </div>
         <button id="next-btn-1" class="page-btn next-btn" title="Next Page"><i class="fas fa-chevron-right"></i></button>
       </div>
@@ -526,10 +689,27 @@
         <div id="viewer-2" class="epub-viewer">
           <div id="viewer-2-placeholder" class="viewer-placeholder">
             <p>Secondary View</p>
-            <button id="viewer-2-select-btn">Select Book</button>
+            <div class="viewer-2-options">
+              <button id="viewer-2-notes-btn" class="viewer-option-btn">
+                <i class="fas fa-sticky-note"></i>
+                <span>Notes</span>
+              </button>
+              <button id="viewer-2-select-btn" class="viewer-option-btn">
+                <i class="fas fa-book"></i>
+                <span>Book</span>
+              </button>
+            </div>
           </div>
         </div>
-        <canvas id="pdf-viewer-2" class="pdf-canvas" style="display:none;"></canvas>
+        <div id="pdf-container-2" class="pdf-container" style="display:none;">
+          <canvas id="pdf-viewer-2" class="pdf-canvas"></canvas>
+          <div id="pdf-highlight-layer-2" class="pdf-highlight-layer"></div>
+          <div id="pdf-text-layer-2" class="pdf-text-layer"></div>
+          <div class="pdf-paged-controls">
+            <button class="pdf-paged-btn pdf-paged-note-btn" id="pdf-paged-note-2" title="Add Note to Page"><i class="fas fa-sticky-note"></i></button>
+            <button class="pdf-paged-btn pdf-paged-delete-hl-btn" id="pdf-delete-hl-2" title="Delete Page Highlights"><i class="fas fa-eraser"></i></button>
+          </div>
+        </div>
         <div id="pdf-scroll-2" class="pdf-scroll-container" style="display:none;">
           <div class="pdf-scroll-content" id="pdf-scroll-content-2"></div>
         </div>
@@ -538,6 +718,15 @@
           <span class="zoom-level" id="zoom-level-2">100%</span>
           <button class="zoom-btn" id="zoom-in-2" title="Zoom In"><i class="fas fa-plus"></i></button>
           <button class="zoom-btn" id="zoom-fit-2" title="Fit to Width"><i class="fas fa-arrows-alt-h"></i></button>
+          <span class="zoom-divider"></span>
+          <div class="page-indicator">
+            <input type="text" class="page-input" id="page-input-2" value="1" title="Go to page">
+            <span class="page-separator">/</span>
+            <span class="page-total" id="page-total-2">1</span>
+          </div>
+          <span class="zoom-divider"></span>
+          <button class="zoom-btn pdf-note-btn" id="pdf-add-note-2" title="Add Note to Page"><i class="fas fa-sticky-note"></i></button>
+          <button class="zoom-btn pdf-delete-hl-scroll-btn" id="pdf-delete-hl-scroll-2" title="Delete Page Highlights"><i class="fas fa-eraser"></i></button>
         </div>
         <button id="next-btn-2" class="page-btn next-btn" title="Next Page"><i class="fas fa-chevron-right"></i></button>
       </div>
@@ -602,6 +791,20 @@
         <i class="fas fa-columns"></i>
         <span>Split</span>
       </button>
+      
+      <!-- Viewer 2 controls (only visible when split view is active) -->
+      <div id="viewer2-controls" class="viewer2-controls hidden">
+        <div class="viewer2-divider"></div>
+        <button id="viewer2-notes-btn-bottom" class="nav-btn" title="Notes for Book 1">
+          <i class="fas fa-sticky-note"></i>
+          <span>Notes</span>
+        </button>
+        <button id="viewer2-book-btn-bottom" class="nav-btn" title="Open Book in Viewer 2">
+          <i class="fas fa-book"></i>
+          <span>Book</span>
+        </button>
+      </div>
+      
       <button id="settings-btn-bottom" class="nav-btn" title="Settings">
         <i class="fas fa-cog"></i>
         <span>Settings</span>

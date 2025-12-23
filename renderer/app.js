@@ -36,6 +36,8 @@ setTimeout(() => {
 // STATE & GLOBALS
 // -------------------------------------------------------
 let library = [];
+let currentLibraryName = 'Default';
+let allLibraryNames = ['Default'];
 let book1, rendition1;
 let book2, rendition2;
 let pdf1, pdf2; // PDF document instances
@@ -45,6 +47,9 @@ let viewerType1 = null; // 'epub' or 'pdf'
 let viewerType2 = null;
 let pdfZoom1 = 1.0, pdfZoom2 = 1.0; // Zoom levels for scroll mode
 let pdfViewMode = 'paged'; // 'paged' or 'scroll'
+let pdfTextContent = { 1: null, 2: null }; // Extracted text per slot: { pageTextMap: {1: "text...", 2: "..."} }
+let pdfOutline = { 1: null, 2: null }; // Extracted outline/bookmarks per slot
+let isPdfTextSelecting = false; // Flag to prevent re-rendering during text selection
 let hasAppliedDefaultView = false; // Track if default view was already applied this session
 let isPlaying = false;
 let isPaused = false;
@@ -59,6 +64,7 @@ let targetSlot = 1;
 let focusedSlot = 1;
 let currentFilter = 'all';
 let currentSort = 'recent';
+let librarySearchTerm = '';
 let selectedTagColor = '#5ba4e6';
 let editingBookPath = null;
 
@@ -87,6 +93,14 @@ const viewer1El = document.getElementById("viewer");
 const viewer2El = document.getElementById("viewer-2");
 const pdfCanvas1 = document.getElementById("pdf-viewer-1");
 const pdfCanvas2 = document.getElementById("pdf-viewer-2");
+const pdfContainer1 = document.getElementById("pdf-container-1");
+const pdfContainer2 = document.getElementById("pdf-container-2");
+const pdfTextLayer1 = document.getElementById("pdf-text-layer-1");
+const pdfTextLayer2 = document.getElementById("pdf-text-layer-2");
+const pdfHighlightLayer1 = document.getElementById("pdf-highlight-layer-1");
+const pdfHighlightLayer2 = document.getElementById("pdf-highlight-layer-2");
+const prevBtn2 = document.getElementById("prev-btn-2");
+const nextBtn2 = document.getElementById("next-btn-2");
 const pdfScroll1 = document.getElementById("pdf-scroll-1");
 const pdfScroll2 = document.getElementById("pdf-scroll-2");
 const pdfScrollContent1 = document.getElementById("pdf-scroll-content-1");
@@ -99,8 +113,12 @@ const sidebar = document.getElementById("sidebar");
 const sidebarToggle = document.getElementById("sidebar-toggle-bottom");
 const sidebar2 = document.getElementById("toc-2");
 const loadBook2Btn = document.getElementById("load-book-2-btn");
+const showNotes2Btn = document.getElementById("show-notes-2-btn");
 const viewer2SelectBtn = document.getElementById("viewer-2-select-btn");
 const viewersContainer = document.getElementById("viewers-container");
+const viewer2Controls = document.getElementById("viewer2-controls");
+const viewer2NotesBtnBottom = document.getElementById("viewer2-notes-btn-bottom");
+const viewer2BookBtnBottom = document.getElementById("viewer2-book-btn-bottom");
 
 // Modal Elements
 const settingsModal = document.getElementById("settings-modal");
@@ -129,6 +147,9 @@ const bookmarksList = document.getElementById("bookmarksList");
 const highlightsBtn = document.getElementById("highlights-btn-bottom");
 const highlightsList = document.getElementById("highlightsList");
 const highlightTooltip = document.getElementById("highlight-tooltip");
+const pdfHighlightTooltip = document.getElementById("pdf-highlight-tooltip");
+const highlightContextMenu = document.getElementById("highlight-context-menu");
+let activeHighlightEntryId = null; // Track which highlight is being acted on
 
 // Voice Controls (for TTS restriction)
 const voiceControlsWrapper = document.getElementById("voice-controls-wrapper");
@@ -144,6 +165,16 @@ const sortOptions = document.getElementById("sortOptions");
 const sortDropdownBtn = document.getElementById("sortDropdownBtn");
 const sortDropdownMenu = document.getElementById("sortDropdownMenu");
 const sortLabel = document.getElementById("sortLabel");
+
+// Library Switcher Elements
+const librarySwitcher = document.querySelector(".library-switcher");
+const librarySwitcherBtn = document.getElementById("librarySwitcherBtn");
+const librarySwitcherMenu = document.getElementById("librarySwitcherMenu");
+const currentLibraryNameEl = document.getElementById("currentLibraryName");
+const librarySelectSettings = document.getElementById("librarySelectSettings");
+const newLibraryNameInput = document.getElementById("newLibraryName");
+const createLibraryBtn = document.getElementById("createLibraryBtn");
+const libraryListEl = document.getElementById("libraryList");
 
 // TTS Elements
 const speakBtn = document.getElementById("speakBtn");
@@ -665,6 +696,7 @@ sidebarToggle?.addEventListener("click", () => {
   sidebar.classList.toggle("collapsed");
   sidebarToggle.classList.toggle("active", !sidebar.classList.contains("collapsed"));
   setTimeout(() => {
+    if (isPdfTextSelecting) return; // Don't re-render during text selection
     if (rendition1) rendition1.resize();
     if (rendition2) rendition2.resize();
     if (viewerType1 === 'pdf') renderPdfPage(1);
@@ -760,6 +792,7 @@ splitBtn?.addEventListener("click", () => {
     sidebar2.classList.remove("hidden");
     viewersContainer.classList.add("split-mode");
     splitBtn.classList.add("active");
+    viewer2Controls?.classList.remove("hidden");
     
     // If viewer 2 is empty, set target slot to 2 for next book selection
     if (!book2 && !pdf2) {
@@ -770,8 +803,10 @@ splitBtn?.addEventListener("click", () => {
     
     // Update EPUB spread to single page when split view opens
     updateEPUBSpread();
+    updateViewer2ControlsState();
     
     setTimeout(() => {
+      if (isPdfTextSelecting) return; // Don't re-render during text selection
       if (rendition1) rendition1.resize();
       if (rendition2) rendition2.resize();
       if (viewerType1 === 'pdf') {
@@ -794,11 +829,23 @@ splitBtn?.addEventListener("click", () => {
     sidebar2.classList.add("hidden");
     viewersContainer.classList.remove("split-mode");
     splitBtn.classList.remove("active");
+    viewer2Controls?.classList.add("hidden");
+    
+    // Clear notes state if notes were open in slot 2
+    if (notesViewerSlot === 2) {
+      notesViewerSlot = null;
+      notesViewerBookPath = null;
+      viewerType2 = null;
+      // Restore paging buttons
+      if (prevBtn2) prevBtn2.style.display = '';
+      if (nextBtn2) nextBtn2.style.display = '';
+    }
     
     // Update EPUB spread to two-page when split view closes
     updateEPUBSpread();
     
     setTimeout(() => {
+      if (isPdfTextSelecting) return; // Don't re-render during text selection
       if (rendition1) rendition1.resize();
       if (viewerType1 === 'pdf') {
         if (pdfViewMode === 'scroll') {
@@ -814,6 +861,23 @@ splitBtn?.addEventListener("click", () => {
   }
 });
 
+// Viewer 2 Notes button handler - use event delegation for robustness
+viewer2El?.addEventListener("click", (e) => {
+  const notesBtn = e.target.closest('#viewer-2-notes-btn');
+  if (notesBtn) {
+    if (!currentBookPath1) {
+      showToast("Open a book first to view its notes");
+      return;
+    }
+    openNotesViewer(currentBookPath1, 2);
+  }
+  
+  const selectBtn = e.target.closest('#viewer-2-select-btn');
+  if (selectBtn) {
+    openLibraryForSlot(2);
+  }
+});
+
 // -------------------------------------------------------
 // SELECT BOOK HANDLERS
 // -------------------------------------------------------
@@ -825,6 +889,47 @@ function openLibraryForSlot(slot) {
 loadBook2Btn.addEventListener("click", () => openLibraryForSlot(2));
 if (viewer2SelectBtn) {
   viewer2SelectBtn.addEventListener("click", () => openLibraryForSlot(2));
+}
+
+// Show notes in viewer 2 button (in sidebar)
+showNotes2Btn?.addEventListener("click", () => {
+  if (!currentBookPath1) {
+    showToast("Open a book first to view its notes");
+    return;
+  }
+  openNotesViewer(currentBookPath1, 2);
+  updateViewer2ControlsState();
+});
+
+// Viewer 2 controls in bottom toolbar
+viewer2NotesBtnBottom?.addEventListener("click", () => {
+  if (!currentBookPath1) {
+    showToast("Open a book first to view its notes");
+    return;
+  }
+  openNotesViewer(currentBookPath1, 2);
+  updateViewer2ControlsState();
+});
+
+viewer2BookBtnBottom?.addEventListener("click", () => {
+  openLibraryForSlot(2);
+});
+
+// Update viewer 2 control button states
+function updateViewer2ControlsState() {
+  if (!viewer2NotesBtnBottom || !viewer2BookBtnBottom) return;
+  
+  // Highlight active state based on what's in viewer 2
+  if (notesViewerSlot === 2) {
+    viewer2NotesBtnBottom.classList.add("active");
+    viewer2BookBtnBottom.classList.remove("active");
+  } else if (book2 || pdf2) {
+    viewer2NotesBtnBottom.classList.remove("active");
+    viewer2BookBtnBottom.classList.add("active");
+  } else {
+    viewer2NotesBtnBottom.classList.remove("active");
+    viewer2BookBtnBottom.classList.remove("active");
+  }
 }
 
 // -------------------------------------------------------
@@ -1046,16 +1151,283 @@ document.addEventListener("keyup", (e) => {
 
 async function loadLibrary() {
   try {
+    // Load current library name and all library names
+    currentLibraryName = await window.electronAPI.getCurrentLibraryName();
+    allLibraryNames = await window.electronAPI.getAllLibraryNames();
+    
+    // Load books from current library
     library = await window.electronAPI.getLibrary();
     if (!Array.isArray(library)) library = [];
   } catch (err) {
     console.error("Failed to load library:", err);
     library = [];
   }
+  
+  // Update UI
+  updateLibrarySwitcher();
   renderLibrary();
   renderRecentlyRead();
   updateFilterTags();
 }
+
+// -------------------------------------------------------
+// MULTI-LIBRARY MANAGEMENT
+// -------------------------------------------------------
+
+// Update the library switcher dropdown
+function updateLibrarySwitcher() {
+  if (currentLibraryNameEl) {
+    currentLibraryNameEl.textContent = currentLibraryName;
+  }
+  
+  // Update switcher dropdown menu
+  if (librarySwitcherMenu) {
+    let html = '';
+    allLibraryNames.forEach(name => {
+      const isActive = name === currentLibraryName;
+      html += `
+        <button class="library-menu-item ${isActive ? 'active' : ''}" data-library="${name}">
+          <i class="fas ${isActive ? 'fa-check' : 'fa-folder'}"></i>
+          ${name}
+        </button>
+      `;
+    });
+    html += '<div class="library-menu-divider"></div>';
+    html += `
+      <button class="library-menu-item manage-btn" id="openLibrarySettings">
+        <i class="fas fa-cog"></i>
+        Manage Libraries...
+      </button>
+    `;
+    librarySwitcherMenu.innerHTML = html;
+    
+    // Add click handlers
+    librarySwitcherMenu.querySelectorAll('.library-menu-item[data-library]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const name = btn.dataset.library;
+        if (name !== currentLibraryName) {
+          await switchLibrary(name);
+        }
+        librarySwitcher?.classList.remove('open');
+      });
+    });
+    
+    // Manage libraries button
+    document.getElementById('openLibrarySettings')?.addEventListener('click', () => {
+      librarySwitcher?.classList.remove('open');
+      settingsModal.style.display = 'flex';
+      loadSettingsValues();
+      // Switch to Libraries tab
+      settingsTabs.forEach(t => t.classList.remove('active'));
+      settingsPanels.forEach(p => p.classList.remove('active'));
+      document.querySelector('.settings-tab[data-tab="libraries"]')?.classList.add('active');
+      document.getElementById('settings-libraries')?.classList.add('active');
+    });
+  }
+  
+  // Update settings select
+  if (librarySelectSettings) {
+    librarySelectSettings.innerHTML = allLibraryNames.map(name => 
+      `<option value="${name}" ${name === currentLibraryName ? 'selected' : ''}>${name}</option>`
+    ).join('');
+  }
+  
+  // Update library list in settings
+  updateLibraryListInSettings();
+}
+
+// Update the library list in settings
+function updateLibraryListInSettings() {
+  if (!libraryListEl) return;
+  
+  // We need to get book counts for each library - for now show current library count
+  let html = '';
+  allLibraryNames.forEach(name => {
+    const isCurrent = name === currentLibraryName;
+    const count = isCurrent ? library.length : '—';
+    html += `
+      <div class="library-list-item ${isCurrent ? 'current' : ''}" data-library="${name}">
+        <i class="fas fa-folder lib-icon"></i>
+        <span class="lib-name">${name}</span>
+        <span class="lib-count">${count} books</span>
+        <div class="lib-actions">
+          <button class="lib-action-btn rename" title="Rename" data-library="${name}">
+            <i class="fas fa-pen"></i>
+          </button>
+          <button class="lib-action-btn delete" title="Delete" data-library="${name}">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </div>
+    `;
+  });
+  libraryListEl.innerHTML = html;
+  
+  // Add event listeners
+  libraryListEl.querySelectorAll('.lib-action-btn.rename').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const libName = btn.dataset.library;
+      const newName = prompt(`Rename "${libName}" to:`, libName);
+      if (newName && newName.trim() && newName.trim() !== libName) {
+        await renameLibrary(libName, newName.trim());
+      }
+    });
+  });
+  
+  libraryListEl.querySelectorAll('.lib-action-btn.delete').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const libName = btn.dataset.library;
+      if (allLibraryNames.length <= 1) {
+        alert('Cannot delete the last library.');
+        return;
+      }
+      if (confirm(`Delete library "${libName}"? All books in this library will be removed.`)) {
+        await deleteLibrary(libName);
+      }
+    });
+  });
+}
+
+// Switch to a different library
+async function switchLibrary(name) {
+  try {
+    const result = await window.electronAPI.switchLibrary(name);
+    if (result.success) {
+      currentLibraryName = name;
+      library = result.library;
+      updateLibrarySwitcher();
+      renderLibrary();
+      renderRecentlyRead();
+      updateFilterTags();
+    } else {
+      alert('Failed to switch library: ' + result.error);
+    }
+  } catch (err) {
+    console.error('Failed to switch library:', err);
+    alert('Failed to switch library.');
+  }
+}
+
+// Create a new library
+async function createLibrary(name) {
+  if (!name || !name.trim()) return;
+  name = name.trim();
+  
+  try {
+    const result = await window.electronAPI.createLibrary(name);
+    if (result.success) {
+      allLibraryNames = result.names;
+      updateLibrarySwitcher();
+      // Optionally switch to the new library
+      await switchLibrary(name);
+    } else {
+      alert('Failed to create library: ' + result.error);
+    }
+  } catch (err) {
+    console.error('Failed to create library:', err);
+    alert('Failed to create library.');
+  }
+}
+
+// Rename a library
+async function renameLibrary(oldName, newName) {
+  try {
+    const result = await window.electronAPI.renameLibrary(oldName, newName);
+    if (result.success) {
+      allLibraryNames = result.names;
+      currentLibraryName = result.currentLibrary;
+      updateLibrarySwitcher();
+    } else {
+      alert('Failed to rename library: ' + result.error);
+    }
+  } catch (err) {
+    console.error('Failed to rename library:', err);
+    alert('Failed to rename library.');
+  }
+}
+
+// Delete a library
+async function deleteLibrary(name) {
+  try {
+    const result = await window.electronAPI.deleteLibrary(name);
+    if (result.success) {
+      allLibraryNames = result.names;
+      // If we deleted the current library, reload
+      if (currentLibraryName === name) {
+        currentLibraryName = result.currentLibrary;
+        await loadLibrary();
+      } else {
+        updateLibrarySwitcher();
+      }
+    } else {
+      alert('Failed to delete library: ' + result.error);
+    }
+  } catch (err) {
+    console.error('Failed to delete library:', err);
+    alert('Failed to delete library.');
+  }
+}
+
+// Move a book to another library
+async function moveBookToLibrary(bookPath, targetLibrary) {
+  try {
+    const result = await window.electronAPI.moveBookToLibrary(bookPath, targetLibrary);
+    if (result.success) {
+      library = result.library;
+      renderLibrary();
+      renderRecentlyRead();
+      updateFilterTags();
+    } else {
+      alert('Failed to move book: ' + result.error);
+    }
+  } catch (err) {
+    console.error('Failed to move book:', err);
+    alert('Failed to move book.');
+  }
+}
+
+// Library switcher dropdown toggle
+librarySwitcherBtn?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  librarySwitcher?.classList.toggle('open');
+});
+
+// Close library switcher when clicking outside
+document.addEventListener('click', (e) => {
+  if (librarySwitcher && !librarySwitcher.contains(e.target)) {
+    librarySwitcher.classList.remove('open');
+  }
+});
+
+// Settings library select change
+librarySelectSettings?.addEventListener('change', async () => {
+  const name = librarySelectSettings.value;
+  if (name !== currentLibraryName) {
+    await switchLibrary(name);
+  }
+});
+
+// Create library button
+createLibraryBtn?.addEventListener('click', async () => {
+  const name = newLibraryNameInput?.value;
+  if (name && name.trim()) {
+    await createLibrary(name.trim());
+    if (newLibraryNameInput) newLibraryNameInput.value = '';
+  }
+});
+
+// Create library on Enter key
+newLibraryNameInput?.addEventListener('keydown', async (e) => {
+  if (e.key === 'Enter') {
+    const name = newLibraryNameInput.value;
+    if (name && name.trim()) {
+      await createLibrary(name.trim());
+      newLibraryNameInput.value = '';
+    }
+  }
+});
 
 // -------------------------------------------------------
 // SORTING & FILTERING
@@ -1128,7 +1500,19 @@ function updateFilterTags() {
 function getSortedLibrary() {
   let filtered = [...library];
   
-  // Apply filter
+  // Apply search filter
+  if (librarySearchTerm) {
+    filtered = filtered.filter(book => {
+      const title = (book.title || '').toLowerCase();
+      const author = (book.author || '').toLowerCase();
+      const tags = (book.tags || []).map(t => t.name.toLowerCase()).join(' ');
+      return title.includes(librarySearchTerm) || 
+             author.includes(librarySearchTerm) || 
+             tags.includes(librarySearchTerm);
+    });
+  }
+  
+  // Apply tag filter
   if (currentFilter !== 'all') {
     filtered = filtered.filter(book => 
       (book.tags || []).some(t => t.name === currentFilter)
@@ -1291,11 +1675,16 @@ function renderLibrary() {
       <div class="book-progress-text">${progress}%</div>
     ` : '';
     
+    // Check if book has notes
+    const hasNotes = book.notes && book.notes.entries && book.notes.entries.length > 0;
+    const notesBadge = hasNotes ? `<div class="book-notes-badge" title="Has notes"><i class="fas fa-sticky-note"></i></div>` : '';
+    
     card.innerHTML = `
       <div class="book-card-inner">
         <div class="book-cover" style="${coverStyle}">
           <div class="book-shine"></div>
           <span class="file-type-badge ${fileType}">${fileType}</span>
+          ${notesBadge}
           ${!book.cover ? `<div class="book-cover-placeholder"><i class="fas fa-${fileType === 'pdf' ? 'file-pdf' : 'book'}"></i></div>` : ''}
         </div>
         <div class="book-info">
@@ -1313,8 +1702,15 @@ function renderLibrary() {
         <div class="book-options-menu">
           <button class="option-open-1"><i class="fas fa-book-open"></i> Open in Viewer 1</button>
           <button class="option-open-2"><i class="fas fa-columns"></i> Open in Viewer 2</button>
+          <button class="option-open-notes"><i class="fas fa-sticky-note"></i> Open Notes</button>
           <div class="option-divider"></div>
           <button class="option-edit"><i class="fas fa-edit"></i> Edit Details</button>
+          <div class="option-move-library"><i class="fas fa-folder-open"></i> Move to Library <i class="fas fa-chevron-right" style="margin-left:auto;font-size:10px;"></i></div>
+          <div class="move-library-submenu" style="display:none;">
+            ${allLibraryNames.filter(n => n !== currentLibraryName).map(n => 
+              `<button class="move-library-option" data-target="${n}"><i class="fas fa-folder"></i> ${n}</button>`
+            ).join('')}
+          </div>
           <div class="option-divider"></div>
           <button class="option-remove"><i class="fas fa-trash"></i> Remove</button>
         </div>
@@ -1379,10 +1775,38 @@ function renderLibrary() {
       await openBookWithTransition(book.path, 2);
     });
     
+    card.querySelector(".option-open-notes").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      optionsMenu.classList.remove("show");
+      if (viewerWrapper2.classList.contains("hidden")) splitBtn.click();
+      switchView("reader");
+      openNotesViewer(book.path, 2);
+    });
+    
     card.querySelector(".option-edit").addEventListener("click", (e) => {
       e.stopPropagation();
       optionsMenu.classList.remove("show");
       openEditBookModal(book.path);
+    });
+    
+    // Move to library submenu
+    const moveLibraryBtn = card.querySelector(".option-move-library");
+    const moveLibrarySubmenu = card.querySelector(".move-library-submenu");
+    
+    moveLibraryBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      // Toggle submenu visibility
+      const isVisible = moveLibrarySubmenu.style.display === "block";
+      moveLibrarySubmenu.style.display = isVisible ? "none" : "block";
+    });
+    
+    card.querySelectorAll(".move-library-option").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const targetLib = btn.dataset.target;
+        optionsMenu.classList.remove("show");
+        await moveBookToLibrary(book.path, targetLib);
+      });
     });
     
     card.querySelector(".option-remove").addEventListener("click", async (e) => {
@@ -1632,7 +2056,9 @@ async function openBook(path, slot) {
           sidebar2?.classList.remove("hidden");
           viewersContainer?.classList.add("split-mode");
           splitBtn?.classList.add("active");
+          viewer2Controls?.classList.remove("hidden");
           updateEPUBSpread();
+          updateViewer2ControlsState();
         }
         // Don't close split view - only open it if that's the default
       }
@@ -1650,6 +2076,11 @@ async function openBook(path, slot) {
     }
     
     applyReaderSettings();
+    
+    // If loading a new book in slot 1 and notes are open in slot 2, update notes for the new book
+    if (slot === 1 && notesViewerSlot === 2 && notesViewerBookPath !== path) {
+      openNotesViewer(path, 2);
+    }
   } catch (err) {
     console.error("Error opening book:", err);
     alert("Failed to open book: " + err.message);
@@ -1661,6 +2092,11 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
   await loadLibrary();
   
   if (slot === 1) {
+    // Close notes viewer if open
+    if (viewerType1 === 'notes') {
+      closeNotesViewer(1);
+    }
+    
     // Clean up old book and rendition completely
     if (rendition1) {
       rendition1.destroy();
@@ -1672,7 +2108,7 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     }
     if (pdf1) {
       pdf1 = null;
-      pdfCanvas1.style.display = 'none';
+      if (pdfContainer1) pdfContainer1.style.display = 'none';
     }
     // Clean up PDF scroll resources
     if (pdfScrollObservers[1]) {
@@ -1820,6 +2256,15 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     });
 
   } else {
+    // Close notes viewer if open in slot 2
+    if (viewerType2 === 'notes' || notesViewerSlot === 2) {
+      // Clear notes state without restoring placeholder (book is about to load)
+      notesViewerSlot = null;
+      notesViewerBookPath = null;
+      if (prevBtn2) prevBtn2.style.display = '';
+      if (nextBtn2) nextBtn2.style.display = '';
+    }
+    
     // Clean up old book and rendition completely
     if (rendition2) {
       rendition2.destroy();
@@ -1831,7 +2276,7 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
     }
     if (pdf2) {
       pdf2 = null;
-      pdfCanvas2.style.display = 'none';
+      if (pdfContainer2) pdfContainer2.style.display = 'none';
     }
     // Clean up PDF scroll resources
     if (pdfScrollObservers[2]) {
@@ -1959,6 +2404,9 @@ async function openEPUB(arrayBuffer, slot, bookPath) {
       if (e.key === "ArrowLeft") rendition2.prev();
       if (e.key === "ArrowRight") rendition2.next();
     });
+    
+    // Update bottom bar controls state
+    updateViewer2ControlsState();
   }
 }
 
@@ -1978,6 +2426,11 @@ async function openPDF(arrayBuffer, slot, bookPath) {
   pdfViewMode = localStorage.getItem('pdf_view_mode') || 'paged';
   
   if (slot === 1) {
+    // Close notes viewer if open
+    if (viewerType1 === 'notes') {
+      closeNotesViewer(1);
+    }
+    
     // Clean up old EPUB book and rendition
     if (rendition1) {
       rendition1.destroy();
@@ -2006,9 +2459,13 @@ async function openPDF(arrayBuffer, slot, bookPath) {
     viewer1El.style.display = 'none';
     viewer1El.innerHTML = "";
     
-    // Hide chapters sidebar (EPUB-only feature)
+    // Clear old PDF text content and outline
+    pdfTextContent[1] = null;
+    pdfOutline[1] = null;
+    
+    // Reset chapters sidebar (will be populated with outline or page list)
     document.getElementById("chapters").innerHTML = "";
-    document.getElementById("chapters").style.display = "none";
+    document.getElementById("pdf-pages-1").innerHTML = "";
     
     // Re-query elements to ensure they exist (in case DOM changed)
     const scroll1 = document.getElementById("pdf-scroll-1");
@@ -2016,7 +2473,7 @@ async function openPDF(arrayBuffer, slot, bookPath) {
     
     if (pdfViewMode === 'scroll' && scroll1 && scrollContent1) {
       try {
-        pdfCanvas1.style.display = 'none';
+        if (pdfContainer1) pdfContainer1.style.display = 'none';
         scroll1.style.display = 'flex';
         if (pdfZoomControls1) pdfZoomControls1.style.display = 'flex';
         viewerWrapper1.classList.add('pdf-scroll-mode');
@@ -2026,26 +2483,46 @@ async function openPDF(arrayBuffer, slot, bookPath) {
       } catch (scrollErr) {
         console.error("Scroll mode failed, falling back to paged:", scrollErr);
         // Fallback to paged mode
-        pdfCanvas1.style.display = 'block';
+        if (pdfContainer1) pdfContainer1.style.display = 'block';
         if (scroll1) scroll1.style.display = 'none';
         if (pdfZoomControls1) pdfZoomControls1.style.display = 'none';
         viewerWrapper1.classList.remove('pdf-scroll-mode');
-        loadPdfPageList(1);
         await renderPdfPage(1);
       }
     } else {
-      pdfCanvas1.style.display = 'block';
+      if (pdfContainer1) pdfContainer1.style.display = 'block';
       if (scroll1) scroll1.style.display = 'none';
       if (pdfZoomControls1) pdfZoomControls1.style.display = 'none';
       viewerWrapper1.classList.remove('pdf-scroll-mode');
-      loadPdfPageList(1);
       await renderPdfPage(1);
     }
+    
+    // Extract and display PDF outline asynchronously
+    extractPdfOutline(pdf, 1).then(outline => {
+      if (outline && outline.length > 0) {
+        renderPdfOutline(1, outline);
+      } else {
+        // No outline - show page list
+        loadPdfPageList(1);
+      }
+    }).catch(err => {
+      console.warn("Could not extract PDF outline:", err);
+      loadPdfPageList(1);
+    });
     
     // Update TTS availability (disabled for PDF)
     updateTTSAvailability();
     
   } else {
+    // Close notes viewer if open in slot 2
+    if (viewerType2 === 'notes' || notesViewerSlot === 2) {
+      // Clear notes state without restoring placeholder (PDF is about to load)
+      notesViewerSlot = null;
+      notesViewerBookPath = null;
+      if (prevBtn2) prevBtn2.style.display = '';
+      if (nextBtn2) nextBtn2.style.display = '';
+    }
+    
     // Clean up old EPUB book and rendition
     if (rendition2) {
       rendition2.destroy();
@@ -2074,9 +2551,13 @@ async function openPDF(arrayBuffer, slot, bookPath) {
     viewer2El.style.display = 'none';
     viewer2El.innerHTML = "";
     
-    // Hide chapters sidebar (EPUB-only feature)
+    // Clear old PDF text content and outline
+    pdfTextContent[2] = null;
+    pdfOutline[2] = null;
+    
+    // Reset chapters sidebar (will be populated with outline or page list)
     document.getElementById("chapters-2").innerHTML = "";
-    document.getElementById("chapters-2").style.display = "none";
+    document.getElementById("pdf-pages-2").innerHTML = "";
     
     // Re-query elements to ensure they exist
     const scroll2 = document.getElementById("pdf-scroll-2");
@@ -2084,7 +2565,7 @@ async function openPDF(arrayBuffer, slot, bookPath) {
     
     if (pdfViewMode === 'scroll' && scroll2 && scrollContent2) {
       try {
-        pdfCanvas2.style.display = 'none';
+        if (pdfContainer2) pdfContainer2.style.display = 'none';
         scroll2.style.display = 'flex';
         if (pdfZoomControls2) pdfZoomControls2.style.display = 'flex';
         viewerWrapper2.classList.add('pdf-scroll-mode');
@@ -2092,21 +2573,33 @@ async function openPDF(arrayBuffer, slot, bookPath) {
         setTimeout(() => scrollToPage(2, pdfPage2), 100);
       } catch (scrollErr) {
         console.error("Scroll mode failed (slot 2), falling back to paged:", scrollErr);
-        pdfCanvas2.style.display = 'block';
+        if (pdfContainer2) pdfContainer2.style.display = 'block';
         if (scroll2) scroll2.style.display = 'none';
         if (pdfZoomControls2) pdfZoomControls2.style.display = 'none';
-        viewerWrapper2.classList.remove('pdf-scroll-mode');
-        loadPdfPageList(2);
         await renderPdfPage(2);
       }
     } else {
-      pdfCanvas2.style.display = 'block';
+      if (pdfContainer2) pdfContainer2.style.display = 'block';
       if (scroll2) scroll2.style.display = 'none';
       if (pdfZoomControls2) pdfZoomControls2.style.display = 'none';
-      viewerWrapper2.classList.remove('pdf-scroll-mode');
-      loadPdfPageList(2);
       await renderPdfPage(2);
     }
+    
+    // Extract and display PDF outline asynchronously
+    extractPdfOutline(pdf, 2).then(outline => {
+      if (outline && outline.length > 0) {
+        renderPdfOutline(2, outline);
+      } else {
+        // No outline - show page list
+        loadPdfPageList(2);
+      }
+    }).catch(err => {
+      console.warn("Could not extract PDF outline (slot 2):", err);
+      loadPdfPageList(2);
+    });
+    
+    // Update bottom bar controls state
+    updateViewer2ControlsState();
   }
 }
 
@@ -2115,10 +2608,12 @@ async function renderPdfPage(slot) {
   const pageNum = slot === 1 ? pdfPage1 : pdfPage2;
   const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
   const canvas = slot === 1 ? pdfCanvas1 : pdfCanvas2;
+  const container = slot === 1 ? pdfContainer1 : pdfContainer2;
+  const textLayer = slot === 1 ? pdfTextLayer1 : pdfTextLayer2;
   
   if (!pdf || !canvas) return;
   
-  const wrapper = canvas.parentElement;
+  const wrapper = slot === 1 ? viewerWrapper1 : viewerWrapper2;
   let wrapperWidth = wrapper.clientWidth - 100; // Account for page buttons
   let wrapperHeight = wrapper.clientHeight;
   
@@ -2146,47 +2641,88 @@ async function renderPdfPage(slot) {
     const twoPageWidth = viewport1.width * 2 + 20; // 20px gap
     const scaleX = wrapperWidth / twoPageWidth;
     const scaleY = wrapperHeight / viewport1.height;
-    const scale = Math.min(scaleX, scaleY, 1.5);
+    const displayScale = Math.min(scaleX, scaleY); // No cap - fit to container
     
     // Account for device pixel ratio for crisp rendering
+    // Use higher quality multiplier for sharper text
     const pixelRatio = window.devicePixelRatio || 1;
-    const scaledViewport = page1.getViewport({ scale: scale * pixelRatio });
+    const qualityMultiplier = Math.max(2, pixelRatio); // At least 2x for quality
+    const renderScale = displayScale * qualityMultiplier;
+    
+    const scaledViewport = page1.getViewport({ scale: renderScale });
     const pageWidth = scaledViewport.width;
     const pageHeight = scaledViewport.height;
-    const gap = 10 * pixelRatio;
+    const gap = 10 * qualityMultiplier;
     
-    // Set canvas actual size (in pixels)
+    // Set canvas actual size (in pixels) - high resolution for quality
     canvas.width = pageWidth * 2 + gap;
     canvas.height = pageHeight;
     
-    // Set canvas display size (CSS)
-    canvas.style.width = `${(pageWidth * 2 + gap) / pixelRatio}px`;
-    canvas.style.height = `${pageHeight / pixelRatio}px`;
+    // Set canvas display size (CSS) - scaled down for display
+    canvas.style.width = `${(pageWidth * 2 + gap) / qualityMultiplier}px`;
+    canvas.style.height = `${pageHeight / qualityMultiplier}px`;
     
     const context = canvas.getContext('2d');
+    // Enable high-quality image rendering
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
     context.fillStyle = '#f0f0f0';
     context.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Render left page
+    // Render left page with high quality intent
     await page1.render({ 
       canvasContext: context, 
-      viewport: scaledViewport 
+      viewport: scaledViewport,
+      intent: 'display'
     }).promise;
     
     // Render right page if exists
     const rightPageNum = pageNum + 1;
     if (rightPageNum <= totalPages) {
       const page2 = await pdf.getPage(rightPageNum);
-      const viewport2 = page2.getViewport({ scale: scale * pixelRatio });
+      const viewport2 = page2.getViewport({ scale: renderScale });
       
       // Offset for right page
       context.save();
       context.translate(pageWidth + gap, 0);
       await page2.render({ 
         canvasContext: context, 
-        viewport: viewport2 
+        viewport: viewport2,
+        intent: 'display'
       }).promise;
       context.restore();
+    }
+    
+    // Render text layer for two-page spread
+    if (textLayer && container) {
+      const displayWidth = (pageWidth * 2 + gap) / qualityMultiplier;
+      const displayHeight = pageHeight / qualityMultiplier;
+      const singlePageDisplayWidth = pageWidth / qualityMultiplier;
+      const gapDisplay = gap / qualityMultiplier;
+      
+      textLayer.innerHTML = '';
+      container.style.width = `${displayWidth}px`;
+      container.style.height = `${displayHeight}px`;
+      textLayer.style.width = `${displayWidth}px`;
+      textLayer.style.height = `${displayHeight}px`;
+      
+      try {
+        // Render text for left page (use displayScale for text layer positioning)
+        const textContent1 = await page1.getTextContent();
+        const textViewport1 = page1.getViewport({ scale: displayScale });
+        renderTextLayerWithSpacing(textLayer, textContent1, textViewport1, displayHeight, 0);
+        
+        // Render text for right page (if exists)
+        if (rightPageNum <= totalPages) {
+          // Need to fetch page2 again since it was scoped to the canvas rendering block
+          const page2ForText = await pdf.getPage(rightPageNum);
+          const textContent2 = await page2ForText.getTextContent();
+          const textViewport2 = page2ForText.getViewport({ scale: displayScale });
+          renderTextLayerWithSpacing(textLayer, textContent2, textViewport2, displayHeight, singlePageDisplayWidth + gapDisplay);
+        }
+      } catch (err) {
+        console.warn('Could not render text layer for two-page spread:', err);
+      }
     }
   } else {
     // Single page view (split mode or single page PDF)
@@ -2194,23 +2730,66 @@ async function renderPdfPage(slot) {
     const viewport = page.getViewport({ scale: 1 });
     const scaleX = wrapperWidth / viewport.width;
     const scaleY = wrapperHeight / viewport.height;
-    const scale = Math.min(scaleX, scaleY, 2);
+    const displayScale = Math.min(scaleX, scaleY); // No cap - fit to container
     
-    // Account for device pixel ratio for crisp rendering
+    // Use higher quality multiplier for sharper text
     const pixelRatio = window.devicePixelRatio || 1;
-    const scaledViewport = page.getViewport({ scale: scale * pixelRatio });
+    const qualityMultiplier = Math.max(2, pixelRatio); // At least 2x for quality
+    const renderScale = displayScale * qualityMultiplier;
     
-    // Set canvas actual size (in pixels)
+    const scaledViewport = page.getViewport({ scale: renderScale });
+    
+    // Set canvas actual size (in pixels) - high resolution for quality
     canvas.width = scaledViewport.width;
     canvas.height = scaledViewport.height;
     
-    // Set canvas display size (CSS)
-    canvas.style.width = `${scaledViewport.width / pixelRatio}px`;
-    canvas.style.height = `${scaledViewport.height / pixelRatio}px`;
+    // Set canvas display size (CSS) - scaled down for display
+    const displayWidth = scaledViewport.width / qualityMultiplier;
+    const displayHeight = scaledViewport.height / qualityMultiplier;
+    canvas.style.width = `${displayWidth}px`;
+    canvas.style.height = `${displayHeight}px`;
     
     const context = canvas.getContext('2d');
-    await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
+    // Enable high-quality image rendering
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    
+    await page.render({ 
+      canvasContext: context, 
+      viewport: scaledViewport,
+      intent: 'display'
+    }).promise;
+    
+    // Render text layer for text selection
+    if (textLayer && container) {
+      // Clear existing text layer
+      textLayer.innerHTML = '';
+      
+      // Size the container and text layer to match canvas display size
+      container.style.width = `${displayWidth}px`;
+      container.style.height = `${displayHeight}px`;
+      textLayer.style.width = `${displayWidth}px`;
+      textLayer.style.height = `${displayHeight}px`;
+      
+      try {
+        const textContent = await page.getTextContent();
+        const textViewport = page.getViewport({ scale: displayScale });
+        
+        // Process and render text with proper spacing
+        renderTextLayerWithSpacing(textLayer, textContent, textViewport, displayHeight);
+      } catch (err) {
+        console.warn('Could not render text layer:', err);
+      }
+    }
   }
+  
+  // Update page indicator
+  updatePageIndicator(slot);
+  
+  // Render highlights for this page
+  // isSplitMode and showTwoPages already defined above
+  const rightPageForHighlight = showTwoPages ? pageNum + 1 : null;
+  renderPdfHighlightsForPage(slot, pageNum, rightPageForHighlight <= totalPages ? rightPageForHighlight : null);
 }
 
 function loadPdfPageList(slot) {
@@ -2240,6 +2819,361 @@ function loadPdfPageList(slot) {
     });
     container.appendChild(item);
   }
+}
+
+// -------------------------------------------------------
+// PDF TEXT AND OUTLINE EXTRACTION
+// -------------------------------------------------------
+
+// Render text layer with proper spacing between words/items
+function renderTextLayerWithSpacing(textLayer, textContent, textViewport, containerHeight, xOffset = 0) {
+  // Group items by line (similar Y position)
+  const lines = [];
+  const lineThreshold = 5; // Pixels tolerance for same line
+  
+  textContent.items.forEach(item => {
+    if (!item.str) return;
+    
+    const tx = pdfjsLib.Util.transform(textViewport.transform, item.transform);
+    const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]);
+    const x = tx[4] + xOffset;
+    const y = tx[5];
+    
+    // Calculate width from transform matrix (more reliable than item.width)
+    // The width in PDF units * scale factor from transform
+    const scaleX = Math.sqrt(tx[0] * tx[0] + tx[1] * tx[1]);
+    const estimatedWidth = item.str.length * fontHeight * 0.5; // Fallback estimate
+    const width = (item.width && item.width > 0) ? item.width * scaleX : estimatedWidth;
+    
+    // Find existing line with similar Y position
+    let foundLine = null;
+    for (const line of lines) {
+      if (Math.abs(line.y - y) < lineThreshold) {
+        foundLine = line;
+        break;
+      }
+    }
+    
+    if (foundLine) {
+      foundLine.items.push({ str: item.str, x, y, width, fontHeight, fontName: item.fontName });
+    } else {
+      lines.push({
+        y,
+        fontHeight,
+        items: [{ str: item.str, x, y, width, fontHeight, fontName: item.fontName }]
+      });
+    }
+  });
+  
+  // Sort lines by Y position (top to bottom)
+  lines.sort((a, b) => a.y - b.y);
+  
+  // Process each line
+  lines.forEach(line => {
+    // Sort items within line by X position (left to right)
+    line.items.sort((a, b) => a.x - b.x);
+    
+    // Merge items with space detection
+    let lineText = '';
+    let prevItem = null;
+    
+    line.items.forEach(item => {
+      if (prevItem) {
+        // Calculate gap between previous item end and current item start
+        const prevEnd = prevItem.x + prevItem.width;
+        const gap = item.x - prevEnd;
+        const spaceWidth = item.fontHeight * 0.25; // Approximate space width (narrower estimate)
+        
+        // Check if previous item ends with space or current starts with space
+        const prevEndsWithSpace = prevItem.str.endsWith(' ');
+        const currStartsWithSpace = item.str.startsWith(' ');
+        
+        // Add space if there's any positive gap and items don't already have spaces
+        if (!prevEndsWithSpace && !currStartsWithSpace) {
+          if (gap > spaceWidth * 0.2) {
+            // Any noticeable gap gets a space
+            lineText += ' ';
+          } else if (gap > -spaceWidth * 0.5) {
+            // Small overlap or touching - check if it looks like separate words
+            // If previous ends with letter and current starts with letter, add space
+            const prevLastChar = prevItem.str.slice(-1);
+            const currFirstChar = item.str.charAt(0);
+            if (/[a-zA-Z0-9]/.test(prevLastChar) && /[a-zA-Z0-9]/.test(currFirstChar)) {
+              // Check for hyphenation at line end (don't add space for hyphenated words)
+              if (!prevItem.str.endsWith('-')) {
+                lineText += ' ';
+              }
+            }
+          }
+        }
+      }
+      
+      lineText += item.str;
+      prevItem = item;
+    });
+    
+    if (!lineText.trim()) return;
+    
+    // Create span for the entire line
+    const firstItem = line.items[0];
+    const span = document.createElement('span');
+    // Add newline at end for proper copy/paste across lines
+    span.textContent = lineText + '\n';
+    span.style.fontSize = `${line.fontHeight}px`;
+    span.style.fontFamily = firstItem.fontName || 'sans-serif';
+    span.style.left = `${firstItem.x}px`;
+    span.style.top = `${line.y - line.fontHeight}px`;
+    
+    textLayer.appendChild(span);
+  });
+}
+
+// Extract text from a single PDF page
+async function extractPdfPageText(pdf, pageNum) {
+  try {
+    const page = await pdf.getPage(pageNum);
+    const textContent = await page.getTextContent();
+    
+    // Combine all text items into a single string with proper spacing
+    let lastY = null;
+    let text = '';
+    
+    textContent.items.forEach(item => {
+      // Add newline if Y position changed significantly (new line)
+      if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
+        text += '\n';
+      } else if (text.length > 0 && !text.endsWith(' ') && !text.endsWith('\n')) {
+        text += ' ';
+      }
+      text += item.str;
+      lastY = item.transform[5];
+    });
+    
+    return text.trim();
+  } catch (err) {
+    console.error(`Error extracting text from page ${pageNum}:`, err);
+    return '';
+  }
+}
+
+// Extract text from all PDF pages (for search)
+async function extractAllPdfText(pdf, slot) {
+  try {
+    const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+    const pageTextMap = {};
+    
+    // Extract text from each page
+    for (let i = 1; i <= totalPages; i++) {
+      const pageText = await extractPdfPageText(pdf, i);
+      pageTextMap[i] = pageText;
+    }
+    
+    // Store in state
+    pdfTextContent[slot] = {
+      pageTextMap: pageTextMap,
+      extractedAt: Date.now()
+    };
+    
+    return pdfTextContent[slot];
+  } catch (err) {
+    console.error('Error extracting PDF text:', err);
+    return null;
+  }
+}
+
+// Extract PDF outline/bookmarks (chapter structure)
+async function extractPdfOutline(pdf, slot) {
+  try {
+    const outline = await pdf.getOutline();
+    
+    if (!outline || outline.length === 0) {
+      pdfOutline[slot] = null;
+      return null;
+    }
+    
+    // Process outline recursively to a cleaner structure
+    const processOutline = (items) => {
+      return items.map(item => ({
+        title: item.title,
+        dest: item.dest,
+        url: item.url,
+        items: item.items ? processOutline(item.items) : []
+      }));
+    };
+    
+    pdfOutline[slot] = processOutline(outline);
+    return pdfOutline[slot];
+  } catch (err) {
+    console.error('Error extracting PDF outline:', err);
+    pdfOutline[slot] = null;
+    return null;
+  }
+}
+
+// Render PDF outline in sidebar (like EPUB TOC)
+function renderPdfOutline(slot, outline) {
+  const chapterListId = slot === 1 ? "chapters" : "chapters-2";
+  const chapterList = document.getElementById(chapterListId);
+  const pdfPagesId = slot === 1 ? "pdf-pages-1" : "pdf-pages-2";
+  const pdfPagesEl = document.getElementById(pdfPagesId);
+  
+  if (!chapterList || !outline || outline.length === 0) {
+    // No outline - fall back to page list
+    if (chapterList) {
+      chapterList.style.display = "none";
+      chapterList.innerHTML = "";
+    }
+    loadPdfPageList(slot);
+    return;
+  }
+  
+  // Hide page list, show chapter list
+  if (pdfPagesEl) pdfPagesEl.style.display = "none";
+  chapterList.style.display = "block";
+  chapterList.innerHTML = "";
+  
+  const renderOutlineItem = (item, level = 0) => {
+    const li = document.createElement("li");
+    if (level > 0) {
+      li.classList.add("pdf-outline-nested");
+      li.style.paddingLeft = `${24 + level * 16}px`;
+    }
+    
+    const link = document.createElement("span");
+    link.className = "chapter-title";
+    link.textContent = item.title;
+    link.title = item.title;
+    
+    link.addEventListener("click", async () => {
+      await navigateToPdfDestination(slot, item.dest);
+    });
+    
+    li.appendChild(link);
+    
+    // Handle sub-items - render them as siblings after this item for flat list appearance
+    const items = [li];
+    if (item.items && item.items.length > 0) {
+      item.items.forEach(subItem => {
+        items.push(...renderOutlineItem(subItem, level + 1));
+      });
+    }
+    
+    return items;
+  };
+  
+  outline.forEach(item => {
+    const items = renderOutlineItem(item);
+    items.forEach(li => chapterList.appendChild(li));
+  });
+}
+
+// Navigate to PDF destination (from outline click)
+async function navigateToPdfDestination(slot, dest) {
+  const pdf = slot === 1 ? pdf1 : pdf2;
+  if (!pdf || !dest) return;
+  
+  try {
+    let pageNum = 1;
+    
+    if (typeof dest === 'string') {
+      // Named destination - resolve it
+      const resolvedDest = await pdf.getDestination(dest);
+      if (resolvedDest && resolvedDest.length > 0) {
+        const pageRef = resolvedDest[0];
+        const pageIndex = await pdf.getPageIndex(pageRef);
+        pageNum = pageIndex + 1; // PDF.js uses 0-based indexing
+      }
+    } else if (Array.isArray(dest) && dest.length > 0) {
+      // Direct page reference array
+      const pageRef = dest[0];
+      if (typeof pageRef === 'object') {
+        const pageIndex = await pdf.getPageIndex(pageRef);
+        pageNum = pageIndex + 1;
+      } else if (typeof pageRef === 'number') {
+        pageNum = pageRef + 1;
+      }
+    }
+    
+    // Navigate to the page
+    const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+    pageNum = Math.max(1, Math.min(pageNum, totalPages));
+    
+    if (slot === 1) {
+      pdfPage1 = pageNum;
+    } else {
+      pdfPage2 = pageNum;
+    }
+    
+    if (pdfViewMode === 'scroll') {
+      scrollToPage(slot, pageNum);
+    } else {
+      await renderPdfPage(slot);
+    }
+    
+    savePdfProgress(slot);
+  } catch (err) {
+    console.error('Error navigating to PDF destination:', err);
+  }
+}
+
+// Search within a PDF
+async function searchInPDF(query, slot) {
+  const pdf = slot === 1 ? pdf1 : pdf2;
+  if (!pdf) return [];
+  
+  // Extract text if not already done
+  if (!pdfTextContent[slot] || !pdfTextContent[slot].pageTextMap) {
+    await extractAllPdfText(pdf, slot);
+  }
+  
+  const textData = pdfTextContent[slot];
+  if (!textData || !textData.pageTextMap) {
+    return [];
+  }
+  
+  const results = [];
+  const lowerQuery = query.toLowerCase();
+  
+  // Search through each page's text
+  Object.entries(textData.pageTextMap).forEach(([pageNumStr, text]) => {
+    const pageNum = parseInt(pageNumStr);
+    const lowerText = text.toLowerCase();
+    let startIndex = 0;
+    let matchIndex;
+    
+    while ((matchIndex = lowerText.indexOf(lowerQuery, startIndex)) !== -1) {
+      // Get excerpt around the match
+      const excerptStart = Math.max(0, matchIndex - 40);
+      const excerptEnd = Math.min(text.length, matchIndex + query.length + 40);
+      let excerpt = text.substring(excerptStart, excerptEnd);
+      
+      if (excerptStart > 0) excerpt = '...' + excerpt;
+      if (excerptEnd < text.length) excerpt = excerpt + '...';
+      
+      // Highlight the match
+      const highlightedExcerpt = excerpt.replace(
+        new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'),
+        '<mark>$1</mark>'
+      );
+      
+      results.push({
+        type: 'pdf',
+        page: pageNum,
+        excerpt: highlightedExcerpt,
+        chapter: `Page ${pageNum}`
+      });
+      
+      startIndex = matchIndex + 1;
+      
+      // Limit results per page
+      if (results.filter(r => r.page === pageNum).length >= 5) break;
+    }
+    
+    // Limit total results
+    if (results.length >= 100) return;
+  });
+  
+  return results;
 }
 
 // -------------------------------------------------------
@@ -2391,6 +3325,9 @@ async function renderPdfScrollMode(slot) {
   // Update zoom level display
   updateZoomDisplay(slot);
   
+  // Update page indicator
+  updatePageIndicator(slot);
+  
   // Load the page list for navigation
   loadPdfPageList(slot);
 }
@@ -2465,6 +3402,33 @@ async function renderPageIfNeeded(slot, pageNum) {
     // Replace placeholder content with canvas
     placeholder.innerHTML = '';
     placeholder.appendChild(canvas);
+    
+    // Add text layer for text selection
+    try {
+      const textContent = await page.getTextContent();
+      const textLayer = document.createElement('div');
+      textLayer.className = 'pdf-text-layer pdf-scroll-text-layer';
+      
+      // Text layer uses BASE scale for positioning, then CSS transform for zoom
+      textLayer.style.width = `${basePageWidth}px`;
+      textLayer.style.height = `${basePageHeight}px`;
+      textLayer.style.transform = `scale(${finalZoom})`;
+      textLayer.dataset.baseScale = baseScale.toString();
+      
+      // Create a viewport at base scale for text positioning
+      const textViewport = page.getViewport({ scale: baseScale });
+      
+      // Use the spacing-aware text rendering
+      renderTextLayerWithSpacing(textLayer, textContent, textViewport, basePageHeight, 0);
+      
+      placeholder.appendChild(textLayer);
+    } catch (textErr) {
+      console.warn('Could not render text layer for page', pageNum, textErr);
+    }
+    
+    // Render highlights for this page
+    renderPdfHighlightsForScrollPage(slot, pageNum, placeholder);
+    
     placeholder.className = 'pdf-scroll-page';
     placeholder.dataset.rendered = 'true';
     placeholder.dataset.renderedAtZoom = finalZoom.toString();
@@ -2486,13 +3450,29 @@ function scrollToPage(slot, pageNum) {
   const scrollContainer = slot === 1 ? pdfScroll1 : pdfScroll2;
   const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
   
+  if (!scrollContainer || !scrollContent) {
+    console.warn("scrollToPage: container not found");
+    return;
+  }
+  
   // Find placeholder or rendered page
   const pageElement = scrollContent.querySelector(`[data-page-num="${pageNum}"]`);
   
   if (pageElement) {
-    pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Calculate the scroll position relative to the scroll container
+    // The page element's offsetTop is relative to its offset parent (scrollContent)
+    const targetScrollTop = pageElement.offsetTop - 20; // 20px padding from top
+    
+    // Smooth scroll to the target position
+    scrollContainer.scrollTo({
+      top: targetScrollTop,
+      behavior: 'smooth'
+    });
+    
     // Ensure page is rendered
     renderPageIfNeeded(slot, pageNum);
+  } else {
+    console.warn(`scrollToPage: page element ${pageNum} not found`);
   }
 }
 
@@ -2582,6 +3562,18 @@ async function recalculatePdfScrollMode(slot) {
     if (canvas) {
       canvas.style.width = `${scaledPageWidth}px`;
       canvas.style.height = `${scaledPageHeight}px`;
+    }
+    
+    // Scale text layer using CSS transform (keeps text positions accurate)
+    const textLayer = placeholder.querySelector('.pdf-text-layer');
+    if (textLayer) {
+      textLayer.style.transform = `scale(${zoom})`;
+    }
+    
+    // Scale highlight layer using CSS transform
+    const highlightLayer = placeholder.querySelector('.pdf-highlight-layer');
+    if (highlightLayer) {
+      highlightLayer.style.transform = `scale(${zoom})`;
     }
   });
   
@@ -2759,6 +3751,18 @@ function performZoomUpdate(slot) {
     if (canvas) {
       canvas.style.width = `${newPageWidth}px`;
       canvas.style.height = `${newPageHeight}px`;
+    }
+    
+    // Scale text layer using CSS transform
+    const textLayer = page.querySelector('.pdf-text-layer');
+    if (textLayer) {
+      textLayer.style.transform = `scale(${newZoom})`;
+    }
+    
+    // Scale highlight layer using CSS transform
+    const highlightLayer = page.querySelector('.pdf-highlight-layer');
+    if (highlightLayer) {
+      highlightLayer.style.transform = `scale(${newZoom})`;
     }
   });
   
@@ -2956,6 +3960,96 @@ document.getElementById('zoom-fit-2')?.addEventListener('click', (e) => {
   setZoom(2, 1.0, null, null);
 });
 
+// PDF Note buttons (scroll mode)
+document.getElementById('pdf-add-note-1')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  showPdfNoteModal();
+});
+
+// PDF Note buttons (paged mode)
+document.getElementById('pdf-paged-note-1')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  showPdfNoteModal();
+});
+
+document.getElementById('pdf-paged-note-2')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  showPdfNoteModalSlot2();
+});
+
+// PDF Delete highlights buttons (paged mode)
+document.getElementById('pdf-delete-hl-1')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  deletePageHighlights(1);
+});
+
+document.getElementById('pdf-delete-hl-2')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  deletePageHighlights(2);
+});
+
+document.getElementById('pdf-add-note-2')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  showPdfNoteModalSlot2();
+});
+
+// PDF Delete highlights buttons (scroll mode)
+document.getElementById('pdf-delete-hl-scroll-1')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  deletePageHighlights(1);
+});
+
+document.getElementById('pdf-delete-hl-scroll-2')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  deletePageHighlights(2);
+});
+
+document.getElementById('pdf-paged-note-2')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  showPdfNoteModalSlot2();
+});
+
+function showPdfNoteModalSlot2() {
+  // For slot 2, use a similar approach
+  if (viewerType2 === 'pdf' && pdf2 && currentBookPath2) {
+    const page = pdfPage2;
+    
+    pendingHighlight = {
+      isPdfNote: true,
+      page: page,
+      text: '',
+      editMode: false,
+      slot: 2,
+      bookPath: currentBookPath2
+    };
+    
+    const notePreview = document.getElementById("notePreviewText");
+    if (notePreview) {
+      notePreview.innerHTML = `<i class="fas fa-file-alt"></i> Adding note for <strong>Page ${page}</strong> (Secondary View)`;
+      notePreview.style.borderLeftColor = '#2196f3';
+    }
+    
+    const noteTextarea = document.getElementById("noteTextarea");
+    if (noteTextarea) noteTextarea.value = '';
+    
+    selectedHighlightColor = '#ffeb3b';
+    document.querySelectorAll(".note-color").forEach(btn => {
+      btn.classList.toggle("selected", btn.dataset.color === selectedHighlightColor);
+    });
+    
+    noteModal.style.display = "flex";
+  }
+}
+
 // Mouse wheel zoom (Ctrl + scroll) - Zoom to mouse position
 // Use smoother delta calculation for better feel
 pdfScroll1?.addEventListener('wheel', (e) => {
@@ -2980,11 +4074,112 @@ pdfScroll2?.addEventListener('wheel', (e) => {
   }
 }, { passive: false });
 
+// Page indicator update function
+// Flag to prevent scroll updates during programmatic jumps
+let isJumpingToPage = { 1: false, 2: false };
+
+function updatePageIndicator(slot, forceUpdate = false) {
+  // Don't update during jump (scroll hasn't settled yet)
+  if (isJumpingToPage[slot] && !forceUpdate) return;
+  
+  const pageInput = document.getElementById(`page-input-${slot}`);
+  const pageTotal = document.getElementById(`page-total-${slot}`);
+  const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+  let currentPage = slot === 1 ? pdfPage1 : pdfPage2;
+  
+  // In scroll mode, get current page from scroll position
+  if (pdfViewMode === 'scroll') {
+    currentPage = getCurrentScrollPage(slot);
+  }
+  
+  if (pageInput && pageInput !== document.activeElement) {
+    pageInput.value = currentPage;
+  }
+  if (pageTotal) {
+    pageTotal.textContent = totalPages;
+  }
+}
+
+// Jump to page function
+function jumpToPage(slot, pageNum) {
+  const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+  const page = Math.max(1, Math.min(totalPages, parseInt(pageNum) || 1));
+  
+  if (slot === 1) {
+    pdfPage1 = page;
+  } else {
+    pdfPage2 = page;
+  }
+  
+  if (pdfViewMode === 'scroll') {
+    // Set flag to prevent scroll events from overwriting the input
+    isJumpingToPage[slot] = true;
+    scrollToPage(slot, page);
+    
+    // Clear flag after scroll animation completes
+    setTimeout(() => {
+      isJumpingToPage[slot] = false;
+      updatePageIndicator(slot, true);
+    }, 600); // Slightly longer than smooth scroll duration
+  } else {
+    renderPdfPage(slot);
+  }
+  
+  // Update input immediately to show target page
+  const pageInput = document.getElementById(`page-input-${slot}`);
+  if (pageInput) {
+    pageInput.value = page;
+  }
+  
+  savePdfProgress(slot);
+}
+
+// Page input event listeners
+// Track if Enter was just pressed to prevent double-jump from blur
+let enterJustPressed = { 1: false, 2: false };
+
+document.getElementById('page-input-1')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    enterJustPressed[1] = true;
+    jumpToPage(1, e.target.value);
+    e.target.blur();
+    // Reset flag after a short delay
+    setTimeout(() => { enterJustPressed[1] = false; }, 100);
+  }
+});
+
+document.getElementById('page-input-1')?.addEventListener('blur', (e) => {
+  // Only jump if Enter wasn't just pressed
+  if (!enterJustPressed[1]) {
+    jumpToPage(1, e.target.value);
+  }
+});
+
+document.getElementById('page-input-2')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    enterJustPressed[2] = true;
+    jumpToPage(2, e.target.value);
+    e.target.blur();
+    setTimeout(() => { enterJustPressed[2] = false; }, 100);
+  }
+});
+
+document.getElementById('page-input-2')?.addEventListener('blur', (e) => {
+  if (!enterJustPressed[2]) {
+    jumpToPage(2, e.target.value);
+  }
+});
+
 // Scroll event listeners for progress tracking (debounced)
 let scrollSaveTimeout1 = null;
 let scrollSaveTimeout2 = null;
 
 pdfScroll1?.addEventListener('scroll', () => {
+  // Update page indicator on scroll (throttled)
+  updatePageIndicator(1);
+  
   if (scrollSaveTimeout1) clearTimeout(scrollSaveTimeout1);
   scrollSaveTimeout1 = setTimeout(() => {
     if (viewerType1 === 'pdf' && pdfViewMode === 'scroll') {
@@ -2994,6 +4189,9 @@ pdfScroll1?.addEventListener('scroll', () => {
 });
 
 pdfScroll2?.addEventListener('scroll', () => {
+  // Update page indicator on scroll (throttled)
+  updatePageIndicator(2);
+  
   if (scrollSaveTimeout2) clearTimeout(scrollSaveTimeout2);
   scrollSaveTimeout2 = setTimeout(() => {
     if (viewerType2 === 'pdf' && pdfViewMode === 'scroll') {
@@ -3025,14 +4223,20 @@ async function loadTOC(bookInstance, renditionInstance, listId) {
           </button>
         `;
         
-        li.querySelector(".chapter-title").onclick = () => renditionInstance.display(item.href);
+        li.querySelector(".chapter-title").onclick = () => {
+          renditionInstance.display(item.href);
+          scrollNotesToChapter(item.label);
+        };
         li.querySelector(".chapter-audio-btn").onclick = (e) => {
           e.stopPropagation();
           playChapterAudio(audioPaths);
         };
       } else {
         li.innerHTML = `<span class="chapter-title">${item.label}</span>`;
-        li.onclick = () => renditionInstance.display(item.href);
+        li.onclick = () => {
+          renditionInstance.display(item.href);
+          scrollNotesToChapter(item.label);
+        };
       }
       
       list.appendChild(li);
@@ -4237,10 +5441,6 @@ searchBtn?.addEventListener("click", () => {
     alert("Please open a book first.");
     return;
   }
-  if (viewerType1 === 'pdf') {
-    alert("Search is currently available for EPUB files only.");
-    return;
-  }
   searchModal.style.display = "flex";
   searchInput.focus();
   searchInput.select();
@@ -4256,23 +5456,55 @@ document.getElementById("searchNextBtn")?.addEventListener("click", () => naviga
 
 async function performSearch() {
   const query = searchInput.value.trim();
-  if (!query || !book1) return;
+  if (!query) return;
+  if (!book1 && !pdf1) return;
   
   searchResultsEl.innerHTML = '<p class="search-placeholder"><i class="fas fa-spinner fa-spin"></i> Searching...</p>';
   searchNav.style.display = "none";
+  
+  try {
+    let results = [];
+    
+    if (viewerType1 === 'pdf' && pdf1) {
+      // PDF search
+      results = await searchInPDF(query, 1);
+    } else if (book1) {
+      // EPUB search
+      results = await searchInEPUB(query);
+    }
+    
+    searchResults = results;
+    currentSearchIndex = 0;
+    
+    if (results.length === 0) {
+      const noTextMsg = viewerType1 === 'pdf' 
+        ? 'No results found. This PDF may not contain searchable text (scanned images).'
+        : 'No results found for "' + escapeHtml(query) + '"';
+      searchResultsEl.innerHTML = `<p class="search-placeholder">${noTextMsg}</p>`;
+      searchNav.style.display = "none";
+    } else {
+      renderSearchResults(results);
+      searchNav.style.display = "flex";
+      searchResultCount.textContent = `${results.length} result${results.length !== 1 ? 's' : ''}`;
+    }
+  } catch (err) {
+    console.error("Search error:", err);
+    searchResultsEl.innerHTML = '<p class="search-placeholder">Search failed. Please try again.</p>';
+  }
+}
+
+// Search within EPUB
+async function searchInEPUB(query) {
+  if (!book1) return [];
   
   // Get the table of contents for chapter name lookup
   const toc = book1.navigation?.toc || [];
   
   function getChapterNameFromHref(href) {
-    // Normalize href for comparison - get just the filename
     const hrefFileName = href.split('/').pop().split('#')[0].toLowerCase();
     
-    // Try to find matching chapter in TOC
     for (const chapter of toc) {
       const tocFileName = chapter.href.split('/').pop().split('#')[0].toLowerCase();
-      
-      // Check various matching conditions
       if (hrefFileName === tocFileName || 
           hrefFileName.includes(tocFileName) || 
           tocFileName.includes(hrefFileName)) {
@@ -4280,7 +5512,6 @@ async function performSearch() {
       }
     }
     
-    // Also check nested TOC items (sub-chapters)
     for (const chapter of toc) {
       if (chapter.subitems) {
         for (const sub of chapter.subitems) {
@@ -4294,7 +5525,6 @@ async function performSearch() {
       }
     }
     
-    // If no match, try to make the href more readable
     let readable = hrefFileName
       .replace(/\.x?html?$/i, '')
       .replace(/[-_]/g, ' ')
@@ -4305,66 +5535,49 @@ async function performSearch() {
       .replace(/index\s*split\s*/i, 'Section ')
       .trim();
     
-    // Capitalize first letter of each word
     readable = readable.replace(/\b\w/g, c => c.toUpperCase());
-    
     return readable || 'Unknown Section';
   }
   
-  try {
-    const results = await book1.spine.spineItems.reduce(async (accPromise, item) => {
-      const acc = await accPromise;
-      await item.load(book1.load.bind(book1));
-      const doc = item.document;
+  const results = await book1.spine.spineItems.reduce(async (accPromise, item) => {
+    const acc = await accPromise;
+    await item.load(book1.load.bind(book1));
+    const doc = item.document;
+    
+    if (doc) {
+      const text = doc.body.innerText || doc.body.textContent;
+      const regex = new RegExp(query, 'gi');
+      let match;
       
-      if (doc) {
-        const text = doc.body.innerText || doc.body.textContent;
-        const regex = new RegExp(query, 'gi');
-        let match;
+      const chapterName = getChapterNameFromHref(item.href);
+      
+      while ((match = regex.exec(text)) !== null) {
+        const start = Math.max(0, match.index - 40);
+        const end = Math.min(text.length, match.index + query.length + 40);
+        let excerpt = text.substring(start, end);
         
-        const chapterName = getChapterNameFromHref(item.href);
+        if (start > 0) excerpt = '...' + excerpt;
+        if (end < text.length) excerpt = excerpt + '...';
         
-        while ((match = regex.exec(text)) !== null) {
-          const start = Math.max(0, match.index - 40);
-          const end = Math.min(text.length, match.index + query.length + 40);
-          let excerpt = text.substring(start, end);
-          
-          if (start > 0) excerpt = '...' + excerpt;
-          if (end < text.length) excerpt = excerpt + '...';
-          
-          // Highlight the match in the excerpt
-          excerpt = excerpt.replace(new RegExp(`(${query})`, 'gi'), '<mark>$1</mark>');
-          
-          acc.push({
-            cfi: item.cfiFromElement(doc.body),
-            href: item.href,
-            excerpt: excerpt,
-            chapter: chapterName
-          });
-          
-          if (acc.length >= 100) break; // Limit results
-        }
+        excerpt = excerpt.replace(new RegExp(`(${query})`, 'gi'), '<mark>$1</mark>');
+        
+        acc.push({
+          type: 'epub',
+          cfi: item.cfiFromElement(doc.body),
+          href: item.href,
+          excerpt: excerpt,
+          chapter: chapterName
+        });
+        
+        if (acc.length >= 100) break;
       }
-      
-      item.unload();
-      return acc;
-    }, Promise.resolve([]));
-    
-    searchResults = results;
-    currentSearchIndex = 0;
-    
-    if (results.length === 0) {
-      searchResultsEl.innerHTML = '<p class="search-placeholder">No results found for "' + query + '"</p>';
-      searchNav.style.display = "none";
-    } else {
-      renderSearchResults(results);
-      searchNav.style.display = "flex";
-      searchResultCount.textContent = `${results.length} result${results.length !== 1 ? 's' : ''}`;
     }
-  } catch (err) {
-    console.error("Search error:", err);
-    searchResultsEl.innerHTML = '<p class="search-placeholder">Search failed. Please try again.</p>';
-  }
+    
+    item.unload();
+    return acc;
+  }, Promise.resolve([]));
+  
+  return results;
 }
 
 function renderSearchResults(results) {
@@ -4392,10 +5605,23 @@ function navigateSearch(direction) {
 
 function goToSearchResult(index) {
   const result = searchResults[index];
-  if (!result || !rendition1) return;
+  if (!result) return;
   
-  rendition1.display(result.href);
   searchModal.style.display = "none";
+  
+  if (result.type === 'pdf' && pdf1) {
+    // PDF search result - navigate to page
+    pdfPage1 = result.page;
+    if (pdfViewMode === 'scroll') {
+      scrollToPage(1, result.page);
+    } else {
+      renderPdfPage(1);
+    }
+    savePdfProgress(1);
+  } else if (rendition1) {
+    // EPUB search result - navigate to href
+    rendition1.display(result.href);
+  }
 }
 
 // -------------------------------------------------------
@@ -4532,7 +5758,7 @@ highlightsBtn?.addEventListener("click", () => {
 
 function renderHighlights() {
   const book = library.find(b => b.path === currentBookPath1);
-  const highlights = book?.highlights || [];
+  const highlights = book?.notes?.entries?.filter(e => e.type === 'quote') || [];
   
   if (highlights.length === 0) {
     highlightsList.innerHTML = '<p class="highlights-placeholder">No highlights yet. Select text while reading to highlight it!</p>';
@@ -4542,11 +5768,11 @@ function renderHighlights() {
   highlightsList.innerHTML = highlights.map(hl => `
     <div class="highlight-item" data-id="${hl.id}" style="--highlight-color: ${hl.color}">
       <div class="highlight-text">${hl.text}</div>
-      ${hl.note ? `<div class="highlight-note">${hl.note}</div>` : ''}
+      ${hl.comment ? `<div class="highlight-note">${hl.comment}</div>` : ''}
       <div class="highlight-meta">
         <span class="highlight-chapter">${hl.chapter || 'Unknown chapter'}</span>
         <div class="highlight-actions">
-          <button class="edit-highlight" data-id="${hl.id}" title="Edit Note"><i class="fas fa-edit"></i></button>
+          <button class="edit-highlight" data-id="${hl.id}" title="Edit Comment"><i class="fas fa-edit"></i></button>
           <button class="delete-highlight" data-id="${hl.id}" title="Delete"><i class="fas fa-trash"></i></button>
         </div>
       </div>
@@ -4580,10 +5806,10 @@ function renderHighlights() {
 
 function goToHighlight(id) {
   const book = library.find(b => b.path === currentBookPath1);
-  const highlight = book?.highlights?.find(hl => hl.id === id);
-  if (!highlight?.cfi || !rendition1) return;
+  const entry = book?.notes?.entries?.find(e => e.id === id && e.type === 'quote');
+  if (!entry?.cfi || !rendition1) return;
   
-  rendition1.display(highlight.cfi);
+  rendition1.display(entry.cfi);
   highlightsModal.style.display = "none";
 }
 
@@ -4599,7 +5825,7 @@ async function exportHighlightsToPdf() {
     return;
   }
   
-  const highlights = book.highlights || [];
+  const highlights = book.notes?.entries?.filter(e => e.type === 'quote') || [];
   if (highlights.length === 0) {
     alert("No highlights to export.");
     return;
@@ -4613,9 +5839,16 @@ async function exportHighlightsToPdf() {
     byChapter[chapter].push(hl);
   });
   
-  // Sort each chapter's highlights by creation time
+  // Sort each chapter's highlights by CFI position (book order)
   Object.values(byChapter).forEach(arr => {
-    arr.sort((a, b) => a.createdAt - b.createdAt);
+    arr.sort((a, b) => {
+      if (a.cfi && b.cfi) {
+        return compareCFI(a.cfi, b.cfi);
+      }
+      if (a.cfi && !b.cfi) return -1;
+      if (!a.cfi && b.cfi) return 1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
   });
   
   // Build HTML
@@ -4725,14 +5958,14 @@ async function exportHighlightsToPdf() {
       html += `
     <div class="highlight" style="border-left-color: ${hl.color};">
       <p class="highlight-text">${escapeHtml(hl.text)}</p>
-      ${hl.note ? `<div class="highlight-note">${escapeHtml(hl.note)}</div>` : ''}
+      ${hl.comment ? `<div class="highlight-note">${escapeHtml(hl.comment)}</div>` : ''}
     </div>
 `;
     }
     html += `  </div>\n`;
   }
   
-  const noteCount = highlights.filter(h => h.note).length;
+  const noteCount = highlights.filter(h => h.comment).length;
   html += `
   <div class="stats">
     ${highlights.length} highlight${highlights.length !== 1 ? 's' : ''} &bull; 
@@ -4760,35 +5993,305 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-async function deleteHighlight(id) {
+// -------------------------------------------------------
+// OBSIDIAN/MARKDOWN EXPORT
+// -------------------------------------------------------
+document.getElementById("exportHighlightsMdBtn")?.addEventListener("click", async () => {
+  await exportHighlightsToMarkdown();
+});
+
+async function exportHighlightsToMarkdown() {
   const book = library.find(b => b.path === currentBookPath1);
-  if (!book?.highlights) return;
-  
-  const highlight = book.highlights.find(hl => hl.id === id);
-  if (highlight && rendition1) {
-    // Remove from rendition
-    rendition1.annotations.remove(highlight.cfi, "highlight");
+  if (!book) {
+    alert("No book loaded.");
+    return;
   }
   
-  book.highlights = book.highlights.filter(hl => hl.id !== id);
+  const highlights = book.notes?.entries?.filter(e => e.type === 'quote') || [];
+  if (highlights.length === 0) {
+    alert("No highlights to export.");
+    return;
+  }
+  
+  // Group highlights by chapter
+  const byChapter = {};
+  highlights.forEach(hl => {
+    const chapter = hl.chapter || "Unknown Chapter";
+    if (!byChapter[chapter]) byChapter[chapter] = [];
+    byChapter[chapter].push(hl);
+  });
+  
+  // Sort each chapter's highlights by CFI position (book order)
+  Object.values(byChapter).forEach(arr => {
+    arr.sort((a, b) => {
+      if (a.cfi && b.cfi) {
+        return compareCFI(a.cfi, b.cfi);
+      }
+      if (a.cfi && !b.cfi) return -1;
+      if (!a.cfi && b.cfi) return 1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+  });
+  
+  const title = book.title || "Book Notes";
+  const author = book.author || "";
+  const date = new Date().toISOString().split('T')[0];
+  
+  // Build Markdown content
+  let md = `# ${title}\n\n`;
+  if (author) md += `**Author:** ${author}\n\n`;
+  md += `**Exported:** ${date}\n\n`;
+  md += `---\n\n`;
+  
+  // Add chapters and highlights
+  for (const [chapter, chapterHighlights] of Object.entries(byChapter)) {
+    md += `## ${chapter}\n\n`;
+    
+    for (const hl of chapterHighlights) {
+      // Highlight text as blockquote
+      md += `> ${hl.text.replace(/\n/g, '\n> ')}\n\n`;
+      
+      // Comment if exists
+      if (hl.comment) {
+        md += `**Note:** ${hl.comment}\n\n`;
+      }
+      
+      md += `---\n\n`;
+    }
+  }
+  
+  // Stats
+  const noteCount = highlights.filter(h => h.comment).length;
+  md += `*${highlights.length} highlight${highlights.length !== 1 ? 's' : ''} • ${noteCount} note${noteCount !== 1 ? 's' : ''} • ${Object.keys(byChapter).length} chapter${Object.keys(byChapter).length !== 1 ? 's' : ''}*\n`;
+  
+  try {
+    const result = await window.electronAPI.exportNotesMarkdown(title, md);
+    if (result && result.success) {
+      highlightsModal.style.display = "none";
+      alert("Exported to: " + result.path);
+    }
+  } catch (err) {
+    console.error("Export failed:", err);
+    alert("Failed to export Markdown. Please try again.");
+  }
+}
+
+// -------------------------------------------------------
+// READING POSITION SYNC
+// -------------------------------------------------------
+document.getElementById("exportPositionsBtn")?.addEventListener("click", async () => {
+  await exportReadingPositions();
+});
+
+document.getElementById("importPositionsBtn")?.addEventListener("click", async () => {
+  await importReadingPositions();
+});
+
+async function exportReadingPositions() {
+  const positions = library.map(book => ({
+    path: book.path,
+    title: book.title,
+    author: book.author,
+    readingProgress: book.readingProgress,
+    lastRead: book.lastRead
+  }));
+  
+  try {
+    const result = await window.electronAPI.exportReadingPositions(positions);
+    if (result && result.success) {
+      alert("Reading positions exported to: " + result.path);
+    }
+  } catch (err) {
+    console.error("Export failed:", err);
+    alert("Failed to export reading positions.");
+  }
+}
+
+async function importReadingPositions() {
+  try {
+    const result = await window.electronAPI.importReadingPositions();
+    if (!result || !result.success) {
+      if (result?.error !== "canceled") {
+        alert("Failed to import positions: " + (result?.error || "Unknown error"));
+      }
+      return;
+    }
+    
+    const positions = result.data;
+    if (!Array.isArray(positions)) {
+      alert("Invalid positions file format.");
+      return;
+    }
+    
+    let updated = 0;
+    for (const pos of positions) {
+      const book = library.find(b => b.path === pos.path);
+      if (book && pos.readingProgress) {
+        book.readingProgress = pos.readingProgress;
+        if (pos.lastRead) book.lastRead = pos.lastRead;
+        await window.electronAPI.addToLibrary(book);
+        updated++;
+      }
+    }
+    
+    await loadLibrary();
+    alert(`Imported reading positions for ${updated} book${updated !== 1 ? 's' : ''}.`);
+  } catch (err) {
+    console.error("Import failed:", err);
+    alert("Failed to import reading positions.");
+  }
+}
+
+// -------------------------------------------------------
+// LIBRARY SEARCH
+// -------------------------------------------------------
+const librarySearchInput = document.getElementById("librarySearchInput");
+const librarySearchClear = document.getElementById("librarySearchClear");
+
+librarySearchInput?.addEventListener("input", (e) => {
+  librarySearchTerm = e.target.value.trim().toLowerCase();
+  librarySearchClear.style.display = librarySearchTerm ? "block" : "none";
+  renderLibrary();
+});
+
+librarySearchClear?.addEventListener("click", () => {
+  librarySearchInput.value = "";
+  librarySearchTerm = "";
+  librarySearchClear.style.display = "none";
+  renderLibrary();
+});
+
+// -------------------------------------------------------
+// ANNOTATIONS SEARCH
+// -------------------------------------------------------
+const annotationsSearchModal = document.getElementById("annotations-search-modal");
+const annotationsSearchInput = document.getElementById("annotationsSearchInput");
+const annotationsSearchResults = document.getElementById("annotationsSearchResults");
+
+document.getElementById("searchAnnotationsBtn")?.addEventListener("click", () => {
+  annotationsSearchModal.style.display = "flex";
+  annotationsSearchInput.value = "";
+  annotationsSearchResults.innerHTML = '<p class="annotations-placeholder">Enter a search term to find highlights and notes across your library.</p>';
+  setTimeout(() => annotationsSearchInput.focus(), 100);
+});
+
+annotationsSearchModal?.querySelector(".close-modal")?.addEventListener("click", () => {
+  annotationsSearchModal.style.display = "none";
+});
+
+annotationsSearchInput?.addEventListener("input", (e) => {
+  const term = e.target.value.trim().toLowerCase();
+  if (term.length < 2) {
+    annotationsSearchResults.innerHTML = '<p class="annotations-placeholder">Enter at least 2 characters to search.</p>';
+    return;
+  }
+  searchAnnotations(term);
+});
+
+function searchAnnotations(term) {
+  const results = [];
+  
+  for (const book of library) {
+    const highlights = book.notes?.entries?.filter(e => e.type === 'quote') || [];
+    for (const hl of highlights) {
+      const textMatch = hl.text?.toLowerCase().includes(term);
+      const noteMatch = hl.comment?.toLowerCase().includes(term);
+      
+      if (textMatch || noteMatch) {
+        results.push({
+          book: book,
+          highlight: hl,
+          matchIn: textMatch ? 'text' : 'note'
+        });
+      }
+    }
+  }
+  
+  if (results.length === 0) {
+    annotationsSearchResults.innerHTML = '<p class="annotations-placeholder">No matching highlights or notes found.</p>';
+    return;
+  }
+  
+  // Render results
+  annotationsSearchResults.innerHTML = results.map(r => {
+    const highlightedText = highlightSearchTerm(r.highlight.text, term);
+    const highlightedNote = r.highlight.comment ? highlightSearchTerm(r.highlight.comment, term) : '';
+    
+    return `
+      <div class="annotation-result-item" data-book-path="${escapeHtml(r.book.path)}" data-cfi="${escapeHtml(r.highlight.cfi || '')}">
+        <div class="annotation-result-book">${escapeHtml(r.book.title || 'Unknown Book')}</div>
+        <div class="annotation-result-text">${highlightedText}</div>
+        ${highlightedNote ? `<div class="annotation-result-note">${highlightedNote}</div>` : ''}
+        <div class="annotation-result-meta">${escapeHtml(r.highlight.chapter || '')}</div>
+      </div>
+    `;
+  }).join('');
+  
+  // Add click handlers
+  annotationsSearchResults.querySelectorAll('.annotation-result-item').forEach(item => {
+    item.addEventListener('click', async () => {
+      const bookPath = item.dataset.bookPath;
+      const cfi = item.dataset.cfi;
+      
+      annotationsSearchModal.style.display = "none";
+      
+      // Open the book and navigate to highlight
+      await openBookWithTransition(bookPath, 1);
+      
+      if (cfi && rendition1) {
+        setTimeout(() => {
+          rendition1.display(cfi).catch(e => console.warn("Could not navigate to highlight:", e));
+        }, 500);
+      }
+    });
+  });
+}
+
+function highlightSearchTerm(text, term) {
+  if (!text) return '';
+  const escaped = escapeHtml(text);
+  const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  return escaped.replace(regex, '<mark>$1</mark>');
+}
+
+async function deleteHighlight(id) {
+  const book = library.find(b => b.path === currentBookPath1);
+  if (!book?.notes?.entries) return;
+  
+  const entry = book.notes.entries.find(e => e.id === id && e.type === 'quote');
+  if (entry && rendition1) {
+    // Remove from rendition
+    rendition1.annotations.remove(entry.cfi, "highlight");
+  }
+  
+  book.notes.entries = book.notes.entries.filter(e => e.id !== id);
+  book.notes.lastModified = Date.now();
   await window.electronAPI.addToLibrary(book);
   renderHighlights();
+  
+  // Refresh notes viewer if open
+  if (notesViewerSlot && notesViewerBookPath === currentBookPath1) {
+    renderNotesContent(book, notesViewerSlot);
+  }
+  
+  // Refresh library to update notes badge
+  renderLibrary();
 }
 
 function editHighlightNote(id) {
   const book = library.find(b => b.path === currentBookPath1);
-  const highlight = book?.highlights?.find(hl => hl.id === id);
-  if (!highlight) return;
+  const entry = book?.notes?.entries?.find(e => e.id === id && e.type === 'quote');
+  if (!entry) return;
   
-  pendingHighlight = { ...highlight, editMode: true };
-  document.getElementById("notePreviewText").textContent = highlight.text;
-  document.getElementById("noteTextarea").value = highlight.note || '';
+  pendingHighlight = { ...entry, editMode: true };
+  document.getElementById("notePreviewText").textContent = entry.text;
+  document.getElementById("noteTextarea").value = entry.comment || '';
   
   // Set color
   document.querySelectorAll(".note-color").forEach(btn => {
-    btn.classList.toggle("selected", btn.dataset.color === highlight.color);
+    btn.classList.toggle("selected", btn.dataset.color === entry.color);
   });
-  selectedHighlightColor = highlight.color;
+  selectedHighlightColor = entry.color;
   
   highlightsModal.style.display = "none";
   noteModal.style.display = "flex";
@@ -4839,8 +6342,11 @@ function setupHighlightSelection(rendition, slot) {
     showHighlightTooltip(tooltipX, tooltipY);
   });
   
-  // Hide tooltip when clicking elsewhere (but not if there's still a selection)
+  // Hide tooltip and context menu when clicking elsewhere (but not if there's still a selection)
   rendition.on("click", () => {
+    // Always hide context menu on any click in the book
+    hideHighlightContextMenu();
+    
     selectionTimeout = setTimeout(() => {
       // Check if there's still an active selection in the iframe
       const iframe = document.querySelector("#viewer iframe");
@@ -4931,12 +6437,14 @@ function getCurrentChapterName() {
   }
 }
 
-// Highlight color buttons
+// Highlight color buttons (EPUB only - PDF uses separate tooltip)
 highlightTooltip?.querySelectorAll(".highlight-color").forEach(btn => {
   btn.addEventListener("click", async () => {
     if (!pendingHighlight) return;
     
     const color = btn.dataset.color;
+    
+    // Handle EPUB highlight
     await createHighlight(pendingHighlight.cfi, pendingHighlight.text, color, '', pendingHighlight.chapter);
     hideHighlightTooltip();
     
@@ -4950,7 +6458,7 @@ highlightTooltip?.querySelectorAll(".highlight-color").forEach(btn => {
   });
 });
 
-// Add Note button
+// Add Note button (EPUB only - PDF uses separate simpler tooltip)
 document.getElementById("addNoteBtn")?.addEventListener("click", () => {
   if (!pendingHighlight) return;
   
@@ -4991,6 +6499,25 @@ document.getElementById("copyTextBtn")?.addEventListener("click", async () => {
   }
 });
 
+// Highlight context menu - Go to Notes
+document.getElementById("highlight-goto-notes")?.addEventListener("click", () => {
+  if (activeHighlightEntryId && currentBookPath1) {
+    hideHighlightContextMenu();
+    openNotesAndJumpToEntry(currentBookPath1, activeHighlightEntryId);
+  }
+});
+
+// Highlight context menu - Delete
+document.getElementById("highlight-delete")?.addEventListener("click", async () => {
+  if (activeHighlightEntryId && currentBookPath1) {
+    hideHighlightContextMenu();
+    await deleteNoteEntry(currentBookPath1, activeHighlightEntryId);
+    showToast("Highlight deleted");
+  }
+});
+
+// (Removed "Add to Notes" - all highlights are now automatically notes)
+
 // Note modal color picker
 document.querySelectorAll(".note-color").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -5010,19 +6537,54 @@ document.getElementById("save-note-btn")?.addEventListener("click", async () => 
   const note = document.getElementById("noteTextarea").value.trim();
   
   try {
-    if (pendingHighlight.editMode) {
-      // Update existing highlight
+    if (pendingHighlight.isPdfHighlight && pendingHighlight.selectionData) {
+      // Create new PDF highlight (note: PDF highlights don't support comments, just colors)
+      await createPdfHighlight(pendingHighlight.slot, pendingHighlight.selectionData, selectedHighlightColor);
+    } else if (pendingHighlight.isPdfNote) {
+      // Create PDF note (page-indexed, no quoted text)
+      if (pendingHighlight.slot === 2 && pendingHighlight.bookPath) {
+        // Handle slot 2 PDF note
+        const book = library.find(b => b.path === pendingHighlight.bookPath);
+        if (book) {
+          if (!book.notes) {
+            book.notes = { entries: [], chapterConclusions: {}, lastModified: Date.now() };
+          }
+          book.notes.entries.push({
+            id: Date.now(),
+            type: 'pdf-note',
+            page: pendingHighlight.page,
+            color: selectedHighlightColor,
+            comment: note,
+            createdAt: Date.now()
+          });
+          book.notes.lastModified = Date.now();
+          await window.electronAPI.addToLibrary(book);
+          renderLibrary();
+          showToast("Note added to page " + pendingHighlight.page);
+        }
+      } else {
+        // Slot 1 PDF note
+        await createPdfNote(pendingHighlight.page, note, selectedHighlightColor);
+      }
+      
+      // Reset the note preview style
+      const notePreview = document.getElementById("notePreviewText");
+      if (notePreview) {
+        notePreview.style.borderLeftColor = '#ffeb3b';
+      }
+    } else if (pendingHighlight.editMode) {
+      // Update existing EPUB highlight
       await updateHighlightNote(pendingHighlight.id, note, selectedHighlightColor);
     } else {
-      // Create new highlight with note
+      // Create new EPUB highlight with note
       await createHighlight(pendingHighlight.cfi, pendingHighlight.text, selectedHighlightColor, note, pendingHighlight.chapter);
     }
     
     noteModal.style.display = "none";
     pendingHighlight = null;
     
-    // Clear selection
-    if (rendition1) {
+    // Clear selection (only for EPUB)
+    if (rendition1 && viewerType1 === 'epub') {
       const contents = rendition1.getContents()[0];
       if (contents) {
         contents.window.getSelection().removeAllRanges();
@@ -5038,60 +6600,467 @@ document.getElementById("cancel-note-btn")?.addEventListener("click", () => {
   pendingHighlight = null;
 });
 
-async function createHighlight(cfi, text, color, note, chapter) {
+async function createHighlight(cfi, text, color, comment, chapter) {
   if (!currentBookPath1) return;
   
   const book = library.find(b => b.path === currentBookPath1);
   if (!book) return;
   
-  if (!book.highlights) book.highlights = [];
+  // Initialize notes structure if needed
+  if (!book.notes) {
+    book.notes = {
+      entries: [],
+      chapterConclusions: {},
+      lastModified: Date.now()
+    };
+  }
   
-  const highlight = {
+  // Check if this CFI is already highlighted
+  const existingEntry = book.notes.entries.find(e => e.type === 'quote' && e.cfi === cfi);
+  if (existingEntry) {
+    // Already highlighted - just show a message
+    showToast("This text is already highlighted");
+    return;
+  }
+  
+  // Create unified note entry (this IS the highlight)
+  const entry = {
     id: Date.now(),
+    type: 'quote',
     cfi: cfi,
     text: text,
     color: color,
-    note: note,
-    chapter: chapter,
+    comment: comment || '',
+    chapter: chapter || 'Unknown Chapter',
     createdAt: Date.now()
   };
   
-  book.highlights.push(highlight);
+  book.notes.entries.push(entry);
+  book.notes.lastModified = Date.now();
   await window.electronAPI.addToLibrary(book);
   
-  // Apply highlight to rendition
-  applyHighlightToRendition(highlight);
+  // Apply highlight to rendition with click handler
+  applyHighlightToRendition(entry);
+  
+  // Refresh notes viewer if open
+  if (notesViewerSlot && notesViewerBookPath === currentBookPath1) {
+    renderNotesContent(book, notesViewerSlot);
+  }
+  
+  // Refresh library to update notes badge
+  renderLibrary();
 }
 
-async function updateHighlightNote(id, note, color) {
-  const book = library.find(b => b.path === currentBookPath1);
-  if (!book?.highlights) return;
+// Create a note for PDF (indexed by page number, no quoted text)
+async function createPdfNote(page, comment, color) {
+  if (!currentBookPath1) return;
   
-  const highlight = book.highlights.find(hl => hl.id === id);
-  if (!highlight) return;
+  const book = library.find(b => b.path === currentBookPath1);
+  if (!book) return;
+  
+  // Initialize notes structure if needed
+  if (!book.notes) {
+    book.notes = {
+      entries: [],
+      chapterConclusions: {},
+      lastModified: Date.now()
+    };
+  }
+  
+  // Create PDF note entry
+  const entry = {
+    id: Date.now(),
+    type: 'pdf-note',
+    page: page,
+    color: color || '#ffeb3b',
+    comment: comment || '',
+    createdAt: Date.now()
+  };
+  
+  book.notes.entries.push(entry);
+  book.notes.lastModified = Date.now();
+  await window.electronAPI.addToLibrary(book);
+  
+  // Refresh notes viewer if open
+  if (notesViewerSlot && notesViewerBookPath === currentBookPath1) {
+    renderNotesContent(book, notesViewerSlot);
+  }
+  
+  // Refresh library to update notes badge
+  renderLibrary();
+  
+  showToast("Note added to page " + page);
+}
+
+// -------------------------------------------------------
+// PDF HIGHLIGHTING SYSTEM
+// -------------------------------------------------------
+
+// Capture current PDF text selection with bounding rectangles
+function capturePdfSelection(slot) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  
+  const text = selection.toString().trim();
+  if (!text || text.length < 2) return null;
+  
+  const textLayer = slot === 1 ? pdfTextLayer1 : pdfTextLayer2;
+  const highlightLayer = slot === 1 ? pdfHighlightLayer1 : pdfHighlightLayer2;
+  if (!textLayer || !highlightLayer) return null;
+  
+  const range = selection.getRangeAt(0);
+  
+  // Check if selection is within this text layer
+  if (!textLayer.contains(range.commonAncestorContainer)) return null;
+  
+  // Get all client rects from the selection
+  const clientRects = range.getClientRects();
+  if (clientRects.length === 0) return null;
+  
+  const layerRect = textLayer.getBoundingClientRect();
+  
+  // Convert to positions relative to the text layer
+  // Merge adjacent/overlapping rects on the same line
+  const rects = [];
+  let lastRect = null;
+  
+  for (const rect of clientRects) {
+    if (rect.width < 1 || rect.height < 1) continue;
+    
+    const relRect = {
+      left: rect.left - layerRect.left,
+      top: rect.top - layerRect.top,
+      width: rect.width,
+      height: rect.height
+    };
+    
+    // Merge with last rect if on same line and close together
+    if (lastRect && Math.abs(lastRect.top - relRect.top) < 5 && 
+        relRect.left - (lastRect.left + lastRect.width) < 10) {
+      lastRect.width = (relRect.left + relRect.width) - lastRect.left;
+    } else {
+      rects.push(relRect);
+      lastRect = relRect;
+    }
+  }
+  
+  if (rects.length === 0) return null;
+  
+  // Get current page number(s)
+  const pageNum = slot === 1 ? pdfPage1 : pdfPage2;
+  
+  // For two-page spread, determine which page the selection is on
+  const isSplitMode = viewersContainer.classList.contains("split-mode");
+  const container = slot === 1 ? pdfContainer1 : pdfContainer2;
+  const containerWidth = container?.clientWidth || 0;
+  
+  // Check if most of the selection is on the left or right page
+  let selectionPage = pageNum;
+  if (!isSplitMode && containerWidth > 0) {
+    const midpoint = containerWidth / 2;
+    const avgX = rects.reduce((sum, r) => sum + r.left + r.width/2, 0) / rects.length;
+    if (avgX > midpoint) {
+      selectionPage = pageNum + 1; // Right page
+    }
+  }
+  
+  return {
+    text: text,
+    rects: rects,
+    page: selectionPage,
+    containerWidth: containerWidth,
+    containerHeight: textLayer.clientHeight
+  };
+}
+
+// Create a PDF highlight
+async function createPdfHighlight(slot, selectionData, color, comment = '') {
+  const bookPath = slot === 1 ? currentBookPath1 : currentBookPath2;
+  if (!bookPath) return;
+  
+  const book = library.find(b => b.path === bookPath);
+  if (!book) return;
+  
+  // Initialize notes structure if needed
+  if (!book.notes) {
+    book.notes = {
+      entries: [],
+      chapterConclusions: {},
+      lastModified: Date.now()
+    };
+  }
+  
+  // Normalize rects to percentages for zoom-independence
+  const normalizedRects = selectionData.rects.map(r => ({
+    leftPct: r.left / selectionData.containerWidth,
+    topPct: r.top / selectionData.containerHeight,
+    widthPct: r.width / selectionData.containerWidth,
+    heightPct: r.height / selectionData.containerHeight
+  }));
+  
+  // Create PDF highlight entry
+  const entry = {
+    id: Date.now(),
+    type: 'pdf-highlight',
+    page: selectionData.page,
+    text: selectionData.text,
+    color: color,
+    comment: comment,
+    rects: normalizedRects,
+    createdAt: Date.now()
+  };
+  
+  book.notes.entries.push(entry);
+  book.notes.lastModified = Date.now();
+  await window.electronAPI.addToLibrary(book);
+  
+  // Render the highlight immediately
+  renderPdfHighlightsForPage(slot, selectionData.page);
+  
+  // Refresh library
+  renderLibrary();
+  
+  showToast("Text highlighted on page " + selectionData.page);
+  
+  // Clear selection
+  window.getSelection()?.removeAllRanges();
+  
+  return entry;
+}
+
+// Render PDF highlights for a specific page in paged mode
+function renderPdfHighlightsForPage(slot, pageNum, rightPageNum = null) {
+  const bookPath = slot === 1 ? currentBookPath1 : currentBookPath2;
+  const highlightLayer = slot === 1 ? pdfHighlightLayer1 : pdfHighlightLayer2;
+  const container = slot === 1 ? pdfContainer1 : pdfContainer2;
+  
+  if (!highlightLayer || !container) return;
+  
+  // Clear existing highlights
+  highlightLayer.innerHTML = '';
+  
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries) return;
+  
+  // Get highlights for this page (and right page if in spread mode)
+  const pagesToRender = [pageNum];
+  if (rightPageNum) pagesToRender.push(rightPageNum);
+  
+  const highlights = book.notes.entries.filter(
+    e => e.type === 'pdf-highlight' && pagesToRender.includes(e.page)
+  );
+  
+  if (highlights.length === 0) return;
+  
+  // Get container dimensions
+  const containerWidth = container.clientWidth;
+  const containerHeight = container.clientHeight;
+  
+  // Set highlight layer size to match container
+  highlightLayer.style.width = `${containerWidth}px`;
+  highlightLayer.style.height = `${containerHeight}px`;
+  
+  // For two-page spread, calculate page offset
+  const isSplitMode = viewersContainer.classList.contains("split-mode");
+  const isTwoPage = !isSplitMode && rightPageNum;
+  const singlePageWidth = isTwoPage ? containerWidth / 2 : containerWidth;
+  
+  highlights.forEach(hl => {
+    // Calculate X offset for right page in spread mode
+    const isRightPage = isTwoPage && hl.page === rightPageNum;
+    const xOffset = isRightPage ? singlePageWidth : 0;
+    const pageWidth = isTwoPage ? singlePageWidth : containerWidth;
+    
+    hl.rects.forEach(rect => {
+      const div = document.createElement('div');
+      div.className = 'pdf-highlight-rect';
+      div.dataset.highlightId = hl.id;
+      div.style.left = `${rect.leftPct * pageWidth + xOffset}px`;
+      div.style.top = `${rect.topPct * containerHeight}px`;
+      div.style.width = `${rect.widthPct * pageWidth}px`;
+      div.style.height = `${rect.heightPct * containerHeight}px`;
+      div.style.backgroundColor = hl.color;
+      div.style.opacity = '0.4';
+      
+      highlightLayer.appendChild(div);
+    });
+  });
+}
+
+// Render PDF highlights for scroll mode (called when page is rendered)
+function renderPdfHighlightsForScrollPage(slot, pageNum, pageElement) {
+  const bookPath = slot === 1 ? currentBookPath1 : currentBookPath2;
+  if (!bookPath) return;
+  
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries) return;
+  
+  // Find or create highlight layer for this page
+  let highlightLayer = pageElement.querySelector('.pdf-scroll-highlight-layer');
+  if (!highlightLayer) {
+    highlightLayer = document.createElement('div');
+    highlightLayer.className = 'pdf-highlight-layer pdf-scroll-highlight-layer';
+    // Insert after canvas, before text layer
+    const textLayer = pageElement.querySelector('.pdf-text-layer');
+    if (textLayer) {
+      pageElement.insertBefore(highlightLayer, textLayer);
+    } else {
+      pageElement.appendChild(highlightLayer);
+    }
+  }
+  
+  // Clear existing highlights for this page
+  highlightLayer.innerHTML = '';
+  
+  // Get highlights for this page
+  const highlights = book.notes.entries.filter(
+    e => e.type === 'pdf-highlight' && e.page === pageNum
+  );
+  
+  if (highlights.length === 0) return;
+  
+  // Get page dimensions
+  const pageWidth = pageElement.clientWidth;
+  const pageHeight = pageElement.clientHeight;
+  
+  // Get current zoom
+  const zoom = slot === 1 ? pdfZoom1 : pdfZoom2;
+  
+  // Set highlight layer size
+  highlightLayer.style.width = `${pageWidth}px`;
+  highlightLayer.style.height = `${pageHeight}px`;
+  highlightLayer.style.transform = `scale(${zoom})`;
+  highlightLayer.style.transformOrigin = '0 0';
+  
+  // Get base dimensions for proper scaling
+  const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+  const basePageWidth = parseFloat(scrollContent?.dataset.basePageWidth) || pageWidth;
+  const basePageHeight = parseFloat(scrollContent?.dataset.basePageHeight) || pageHeight;
+  
+  highlights.forEach(hl => {
+    hl.rects.forEach(rect => {
+      const div = document.createElement('div');
+      div.className = 'pdf-highlight-rect';
+      div.dataset.highlightId = hl.id;
+      // Use base dimensions for positioning (CSS transform handles zoom)
+      div.style.left = `${rect.leftPct * basePageWidth}px`;
+      div.style.top = `${rect.topPct * basePageHeight}px`;
+      div.style.width = `${rect.widthPct * basePageWidth}px`;
+      div.style.height = `${rect.heightPct * basePageHeight}px`;
+      div.style.backgroundColor = hl.color;
+      div.style.opacity = '0.4';
+      
+      highlightLayer.appendChild(div);
+    });
+  });
+}
+
+// Update highlights when zoom changes in scroll mode
+function updatePdfHighlightZoom(slot, zoom) {
+  const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+  if (!scrollContent) return;
+  
+  scrollContent.querySelectorAll('.pdf-scroll-highlight-layer').forEach(layer => {
+    layer.style.transform = `scale(${zoom})`;
+  });
+}
+
+// Hide any PDF highlight context menus (kept for compatibility)
+function hidePdfHighlightContextMenu() {
+  document.querySelectorAll('.pdf-highlight-context-menu').forEach(m => m.remove());
+}
+
+// Show PDF note modal - reuse the existing note modal
+function showPdfNoteModal() {
+  if (!currentBookPath1 || viewerType1 !== 'pdf') return;
+  
+  const page = pdfPage1;
+  
+  // Set up pendingHighlight for PDF note mode
+  pendingHighlight = {
+    isPdfNote: true,
+    page: page,
+    text: '', // No quoted text for PDFs
+    editMode: false
+  };
+  
+  // Update modal to show PDF page instead of quote preview
+  const notePreview = document.getElementById("notePreviewText");
+  if (notePreview) {
+    notePreview.innerHTML = `<i class="fas fa-file-alt"></i> Adding note for <strong>Page ${page}</strong>`;
+    notePreview.style.borderLeftColor = '#2196f3'; // Blue for PDF
+  }
+  
+  // Clear the textarea
+  const noteTextarea = document.getElementById("noteTextarea");
+  if (noteTextarea) {
+    noteTextarea.value = '';
+  }
+  
+  // Reset color selection
+  selectedHighlightColor = '#ffeb3b';
+  document.querySelectorAll(".note-color").forEach(btn => {
+    btn.classList.toggle("selected", btn.dataset.color === selectedHighlightColor);
+  });
+  
+  noteModal.style.display = "flex";
+}
+
+async function updateHighlightNote(id, comment, color) {
+  const book = library.find(b => b.path === currentBookPath1);
+  if (!book?.notes?.entries) return;
+  
+  const entry = book.notes.entries.find(e => e.id === id && e.type === 'quote');
+  if (!entry) return;
   
   // Remove old highlight from rendition
   if (rendition1) {
-    rendition1.annotations.remove(highlight.cfi, "highlight");
+    rendition1.annotations.remove(entry.cfi, "highlight");
   }
   
-  highlight.note = note;
-  highlight.color = color;
+  entry.comment = comment;
+  entry.color = color;
+  book.notes.lastModified = Date.now();
   
   await window.electronAPI.addToLibrary(book);
   
   // Re-apply with new color
-  applyHighlightToRendition(highlight);
+  applyHighlightToRendition(entry);
+  
+  // Refresh notes viewer if open
+  if (notesViewerSlot && notesViewerBookPath === currentBookPath1) {
+    renderNotesContent(book, notesViewerSlot);
+  }
 }
 
-function applyHighlightToRendition(highlight) {
+function applyHighlightToRendition(entry) {
   if (!rendition1) return;
   
   try {
-    rendition1.annotations.highlight(highlight.cfi, {}, (e) => {
-      // Click handler for highlight - could show note/edit modal here
-    }, "hl-" + highlight.id, {
-      "fill": highlight.color,
+    rendition1.annotations.highlight(entry.cfi, {}, (e) => {
+      // Click handler - show context menu
+      e.stopPropagation();
+      
+      let x, y;
+      
+      if (e.target) {
+        // getBoundingClientRect() returns viewport-relative coordinates in Electron/EPUB.js
+        const targetRect = e.target.getBoundingClientRect();
+        x = targetRect.left + (targetRect.width / 2);
+        y = targetRect.top;
+      }
+      
+      // Final fallback
+      if (x === undefined || y === undefined) {
+        const viewer = document.getElementById("viewer");
+        const rect = viewer?.getBoundingClientRect();
+        x = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+        y = rect ? rect.top + 100 : 100;
+      }
+      
+      showHighlightContextMenu(x, y, entry.id);
+    }, "hl-" + entry.id, {
+      "fill": entry.color,
       "fill-opacity": "0.4"
     });
   } catch (err) {
@@ -5099,28 +7068,1237 @@ function applyHighlightToRendition(highlight) {
   }
 }
 
+// Show context menu for existing highlight (positioned above, like tooltip)
+function showHighlightContextMenu(x, y, entryId) {
+  activeHighlightEntryId = entryId;
+  
+  // Position using transform (same approach as highlight tooltip)
+  highlightContextMenu.style.left = `${x}px`;
+  highlightContextMenu.style.top = `${y}px`;
+  highlightContextMenu.style.display = 'flex';
+  highlightContextMenu.classList.remove('below');
+  
+  // Check if menu goes off screen and adjust
+  requestAnimationFrame(() => {
+    const rect = highlightContextMenu.getBoundingClientRect();
+    
+    // If menu goes off top, show below instead
+    if (rect.top < 10) {
+      highlightContextMenu.classList.add('below');
+    }
+  });
+}
+
+function hideHighlightContextMenu() {
+  highlightContextMenu.style.display = 'none';
+  highlightContextMenu.classList.remove('below');
+  activeHighlightEntryId = null;
+}
+
+// Open notes viewer and scroll to a specific entry
+function openNotesAndJumpToEntry(bookPath, entryId) {
+  // Check if notes are already open for this book
+  if (notesViewerSlot === 2 && notesViewerBookPath === bookPath) {
+    // Just scroll to the entry
+    const entryElement = viewer2El.querySelector(`[data-entry-id="${entryId}"]`);
+    if (entryElement) {
+      entryElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      entryElement.style.boxShadow = '0 0 0 3px var(--accent)';
+      setTimeout(() => {
+        entryElement.style.boxShadow = '';
+      }, 2000);
+    }
+    return;
+  }
+  
+  // If split view is hidden, open it
+  const wasHidden = viewerWrapper2.classList.contains("hidden");
+  if (wasHidden) {
+    viewerWrapper2.classList.remove("hidden");
+    sidebar2.classList.remove("hidden");
+    viewersContainer.classList.add("split-mode");
+    splitBtn.classList.add("active");
+    viewer2Controls?.classList.remove("hidden");
+  }
+  
+  // Open notes in slot 2
+  openNotesViewer(bookPath, 2);
+  
+  // Update EPUB spread and resize after a short delay
+  setTimeout(() => {
+    updateEPUBSpread();
+    if (rendition1) rendition1.resize();
+    
+    // Then scroll to the entry after notes are rendered
+    setTimeout(() => {
+      const entryElement = viewer2El.querySelector(`[data-entry-id="${entryId}"]`);
+      if (entryElement) {
+        entryElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        entryElement.style.boxShadow = '0 0 0 3px var(--accent)';
+        setTimeout(() => {
+          entryElement.style.boxShadow = '';
+        }, 2000);
+      }
+    }, 200);
+  }, 100);
+}
+
 function loadHighlightsForBook(bookPath) {
   const book = library.find(b => b.path === bookPath);
-  if (!book?.highlights || !rendition1) return;
+  if (!book?.notes?.entries || !rendition1) return;
   
   // Wait for rendition to be ready
   setTimeout(() => {
     try {
-      book.highlights.forEach(highlight => {
+      // Filter for quote entries (these are the highlights)
+      const highlights = book.notes.entries.filter(e => e.type === 'quote');
+      
+      highlights.forEach(entry => {
         // Try to remove old highlight first (in case it exists from previous render)
         // This prevents duplicates when re-applying after resize/column changes
         try {
-          rendition1.annotations.remove(highlight.cfi, "highlight");
+          rendition1.annotations.remove(entry.cfi, "highlight");
         } catch (e) {
           // Ignore if highlight doesn't exist - that's fine
         }
         // Apply highlight (CFI is stable across column/layout changes)
-        applyHighlightToRendition(highlight);
+        applyHighlightToRendition(entry);
       });
     } catch (err) {
       console.warn("Error loading highlights:", err);
     }
   }, 100);
+}
+
+// -------------------------------------------------------
+// NOTES SYSTEM - Integrated Book Notes
+// -------------------------------------------------------
+
+// Track which viewer has notes open and for which book
+let notesViewerSlot = null; // 1 or 2
+let notesViewerBookPath = null;
+
+// Simple toast notification
+function showToast(message, duration = 3000) {
+  let toast = document.getElementById("toast-notification");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "toast-notification";
+    toast.style.cssText = `
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--text-primary);
+      color: var(--bg-primary);
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 10000;
+      opacity: 0;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    document.body.appendChild(toast);
+  }
+  
+  toast.textContent = message;
+  
+  requestAnimationFrame(() => {
+    toast.style.opacity = "1";
+    toast.style.transform = "translateX(-50%) translateY(0)";
+  });
+  
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateX(-50%) translateY(20px)";
+  }, duration);
+}
+
+// Add a quote to the book's notes
+// (addQuoteToNotes removed - createHighlight now handles this)
+
+// Update a quote's comment
+async function updateQuoteComment(bookPath, entryId, newComment) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries) return;
+  
+  const entry = book.notes.entries.find(e => e.id === entryId);
+  if (entry) {
+    entry.comment = newComment;
+    book.notes.lastModified = Date.now();
+    await window.electronAPI.addToLibrary(book);
+    
+    if (notesViewerSlot && notesViewerBookPath === bookPath) {
+      renderNotesContent(book, notesViewerSlot);
+    }
+  }
+}
+
+// Delete a note entry and its highlight
+async function deleteNoteEntry(bookPath, entryId) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries) return;
+  
+  // Find the entry to get its CFI before deleting
+  const entry = book.notes.entries.find(e => e.id === entryId);
+  
+  // Remove highlight from rendition if this is for the current book and it's a quote entry
+  if (bookPath === currentBookPath1 && entry && entry.type === 'quote' && entry.cfi && rendition1) {
+    try {
+      rendition1.annotations.remove(entry.cfi, "highlight");
+    } catch (err) {
+      // Highlight might not exist, that's fine
+      console.warn("Could not remove highlight:", err);
+    }
+  }
+  
+  book.notes.entries = book.notes.entries.filter(e => e.id !== entryId);
+  book.notes.lastModified = Date.now();
+  await window.electronAPI.addToLibrary(book);
+  
+  if (notesViewerSlot && notesViewerBookPath === bookPath) {
+    renderNotesContent(book, notesViewerSlot);
+  }
+  
+  renderLibrary(); // Update notes badge
+}
+
+// Update chapter conclusion
+async function updateChapterConclusion(bookPath, chapter, conclusion) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes) return;
+  
+  if (!book.notes.chapterConclusions) {
+    book.notes.chapterConclusions = {};
+  }
+  
+  book.notes.chapterConclusions[chapter] = conclusion;
+  book.notes.lastModified = Date.now();
+  await window.electronAPI.addToLibrary(book);
+  
+  if (notesViewerSlot && notesViewerBookPath === bookPath) {
+    renderNotesContent(book, notesViewerSlot);
+  }
+}
+
+// Add freeform note
+async function addFreeformNote(bookPath, content) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book) return;
+  
+  if (!book.notes) {
+    book.notes = {
+      entries: [],
+      chapterConclusions: {},
+      lastModified: Date.now()
+    };
+  }
+  
+  const entry = {
+    id: Date.now(),
+    type: 'freeform',
+    content: content,
+    createdAt: Date.now()
+  };
+  
+  book.notes.entries.push(entry);
+  book.notes.lastModified = Date.now();
+  await window.electronAPI.addToLibrary(book);
+  
+  if (notesViewerSlot && notesViewerBookPath === bookPath) {
+    renderNotesContent(book, notesViewerSlot);
+  }
+  
+  renderLibrary();
+}
+
+// Close notes viewer in a slot
+function closeNotesViewer(slot, alsoCloseSplit = false) {
+  const viewer = slot === 1 ? viewer1El : viewer2El;
+  
+  // Reset notes viewer state
+  if (notesViewerSlot === slot) {
+    notesViewerSlot = null;
+    notesViewerBookPath = null;
+  }
+  
+  // Restore paging buttons for slot 2
+  if (slot === 2) {
+    if (prevBtn2) prevBtn2.style.display = '';
+    if (nextBtn2) nextBtn2.style.display = '';
+    
+    // Restore the placeholder in viewer 2 with both options
+    // Event listeners are handled via delegation on viewer2El
+    viewer.innerHTML = `
+      <div id="viewer-2-placeholder" class="viewer-placeholder">
+        <p>Secondary View</p>
+        <div class="viewer-2-options">
+          <button id="viewer-2-notes-btn" class="viewer-option-btn">
+            <i class="fas fa-sticky-note"></i>
+            <span>Notes</span>
+          </button>
+          <button id="viewer-2-select-btn" class="viewer-option-btn">
+            <i class="fas fa-book"></i>
+            <span>Book</span>
+          </button>
+        </div>
+      </div>
+    `;
+  } else {
+    viewer.innerHTML = '';
+  }
+  
+  // Reset viewer type
+  if (slot === 1) {
+    viewerType1 = null;
+  } else {
+    viewerType2 = null;
+  }
+  
+  // Close split view if requested and in split mode
+  if (alsoCloseSplit && slot === 2 && !viewerWrapper2.classList.contains("hidden")) {
+    // Manually close split view
+    viewerWrapper2.classList.add("hidden");
+    sidebar2.classList.add("hidden");
+    viewersContainer.classList.remove("split-mode");
+    splitBtn.classList.remove("active");
+    viewer2Controls?.classList.add("hidden");
+    
+    // Update EPUB spread back to full width and resize
+    setTimeout(() => {
+      updateEPUBSpread();
+      if (rendition1) rendition1.resize();
+    }, 50);
+    
+    focusedSlot = 1;
+    updateFocusUI();
+  }
+  
+  // Update bottom bar controls state
+  updateViewer2ControlsState();
+}
+
+// Open notes viewer in a slot
+function openNotesViewer(bookPath, slot = 2) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book) return;
+  
+  notesViewerSlot = slot;
+  notesViewerBookPath = bookPath;
+  
+  // Get the correct viewer elements
+  const viewerWrapper = slot === 1 ? viewerWrapper1 : viewerWrapper2;
+  const viewer = slot === 1 ? viewer1El : viewer2El;
+  
+  // Clear any existing content (book or PDF)
+  if (slot === 1) {
+    if (rendition1) {
+      rendition1.destroy();
+      rendition1 = null;
+    }
+    if (book1) {
+      book1.destroy();
+      book1 = null;
+    }
+    currentBookPath1 = null;
+    viewerType1 = 'notes';
+  } else {
+    if (rendition2) {
+      rendition2.destroy();
+      rendition2 = null;
+    }
+    if (book2) {
+      book2.destroy();
+      book2 = null;
+    }
+    // Clear PDF resources for slot 2
+    if (pdf2) {
+      pdf2 = null;
+    }
+    currentBookPath2 = null;
+    viewerType2 = 'notes';
+    
+    // Hide paging buttons for slot 2 when showing notes
+    if (prevBtn2) prevBtn2.style.display = 'none';
+    if (nextBtn2) nextBtn2.style.display = 'none';
+    
+    // Hide PDF elements for slot 2
+    if (pdfContainer2) pdfContainer2.style.display = 'none';
+    if (pdfScroll2) pdfScroll2.style.display = 'none';
+    const pdfZoomControls2 = document.getElementById("pdf-zoom-controls-2");
+    if (pdfZoomControls2) pdfZoomControls2.style.display = 'none';
+  }
+  
+  // Make sure viewer is visible
+  viewer.style.display = 'block';
+  
+  // Clear the viewer and create notes viewer
+  viewer.innerHTML = '';
+  
+  const notesViewer = document.createElement('div');
+  notesViewer.className = 'notes-viewer';
+  notesViewer.innerHTML = `
+    <div class="notes-header">
+      <div class="notes-book-info">
+        <h2 class="notes-book-title">${escapeHtml(book.title || 'Untitled')}</h2>
+        <p class="notes-book-author">${escapeHtml(book.author || '')}</p>
+      </div>
+      <div class="notes-actions">
+        <button class="notes-switch-book-btn" title="Switch to Book"><i class="fas fa-book"></i></button>
+        <button class="notes-export-md-btn" title="Export to Markdown (Obsidian)"><i class="fab fa-markdown"></i></button>
+        <button class="notes-export-pdf-btn" title="Export to PDF"><i class="fas fa-file-pdf"></i></button>
+      </div>
+    </div>
+    
+    <div class="notes-content">
+      <!-- Content will be rendered here -->
+    </div>
+  `;
+  
+  viewer.appendChild(notesViewer);
+  
+  // Add event listeners
+  notesViewer.querySelector('.notes-switch-book-btn').addEventListener('click', () => {
+    // Close notes and go to library to select a book
+    closeNotesViewer(slot, false);
+    openLibraryForSlot(2);
+  });
+  
+  notesViewer.querySelector('.notes-export-md-btn').addEventListener('click', () => {
+    exportBookNotesMarkdown(bookPath);
+  });
+  
+  notesViewer.querySelector('.notes-export-pdf-btn').addEventListener('click', () => {
+    exportBookNotesPdf(bookPath);
+  });
+  
+  // Render the notes content
+  renderNotesContent(book, slot);
+  
+  // Update sidebar (hide TOC since we're showing notes)
+  if (slot === 1) {
+    chapterList.innerHTML = '<div style="padding: 20px; color: var(--text-muted); text-align: center;">Notes viewer active</div>';
+  } else {
+    const chapterList2 = document.getElementById("chapters-2");
+    if (chapterList2) {
+      chapterList2.innerHTML = '<div style="padding: 20px; color: var(--text-muted); text-align: center;">Notes viewer active</div>';
+    }
+  }
+  
+  // Update bottom bar controls state
+  updateViewer2ControlsState();
+}
+
+// Helper function to compare CFI positions
+// CFI strings can be compared by extracting numeric path components
+function compareCFI(cfi1, cfi2) {
+  if (!cfi1 && !cfi2) return 0;
+  if (!cfi1) return 1;
+  if (!cfi2) return -1;
+  
+  // CFI format: epubcfi(/6/4[chap01ref]!/4[body01]/10[para05]/3:10)
+  // Extract numeric path components for comparison
+  const extractPath = (cfi) => {
+    if (!cfi) return [];
+    // Remove epubcfi( and ) wrapper
+    const path = cfi.replace(/^epubcfi\(/, '').replace(/\)$/, '');
+    // Extract all numeric values from the path
+    const matches = path.match(/\d+/g);
+    return matches ? matches.map(Number) : [];
+  };
+  
+  const path1 = extractPath(cfi1);
+  const path2 = extractPath(cfi2);
+  
+  // Compare path components
+  const minLen = Math.min(path1.length, path2.length);
+  for (let i = 0; i < minLen; i++) {
+    if (path1[i] !== path2[i]) {
+      return path1[i] - path2[i];
+    }
+  }
+  
+  // If one path is longer, it comes after
+  return path1.length - path2.length;
+}
+
+// Render PDF notes content organized by page
+function renderPdfNotesContent(contentDiv, book, pdfNotes, freeformNotes) {
+  // Group notes by page
+  const byPage = {};
+  pdfNotes.forEach(note => {
+    const page = note.page || 1;
+    if (!byPage[page]) {
+      byPage[page] = [];
+    }
+    byPage[page].push(note);
+  });
+  
+  // Sort pages numerically
+  const sortedPages = Object.keys(byPage).map(Number).sort((a, b) => a - b);
+  
+  let html = '';
+  
+  // Render each page's notes
+  sortedPages.forEach(page => {
+    const entries = byPage[page];
+    // Sort entries within page by creation time
+    entries.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    
+    html += `
+      <div class="notes-chapter notes-pdf-page" data-page="${page}">
+        <div class="notes-chapter-header">
+          <h3 class="notes-chapter-title">
+            <i class="fas fa-file-alt"></i>
+            Page ${page}
+          </h3>
+          <span class="notes-chapter-count">${entries.length} note${entries.length !== 1 ? 's' : ''}</span>
+        </div>
+        
+        ${entries.map(entry => `
+          <div class="notes-entry pdf-note-entry" data-entry-id="${entry.id}" data-page="${entry.page}">
+            <div class="notes-pdf-page-link" data-page="${entry.page}" title="Click to go to page ${entry.page}">
+              <i class="fas fa-arrow-right"></i>
+              <span>Go to page ${entry.page}</span>
+            </div>
+            <div class="notes-entry-editor">
+              <textarea 
+                class="notes-textarea" 
+                data-entry-id="${entry.id}" 
+                placeholder="Write your notes for this page..."
+                spellcheck="true"
+              >${entry.comment ? escapeHtml(entry.comment) : ''}</textarea>
+            </div>
+            <div class="notes-entry-footer">
+              <span class="notes-entry-date">
+                <i class="fas fa-clock"></i>
+                ${formatDate(entry.createdAt)}
+              </span>
+              <button class="notes-delete-btn" data-entry-id="${entry.id}" title="Delete note">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  });
+  
+  // Render freeform notes at the end
+  if (freeformNotes.length > 0) {
+    html += `
+      <div class="notes-chapter notes-general-section">
+        <div class="notes-chapter-header">
+          <h3 class="notes-chapter-title">
+            <i class="fas fa-sticky-note"></i>
+            General Notes
+          </h3>
+          <span class="notes-chapter-count">${freeformNotes.length} note${freeformNotes.length !== 1 ? 's' : ''}</span>
+        </div>
+        
+        ${freeformNotes.map(entry => `
+          <div class="notes-freeform-entry" data-entry-id="${entry.id}">
+            <textarea 
+              class="notes-freeform-textarea" 
+              data-entry-id="${entry.id}"
+              placeholder="Write your note..."
+              spellcheck="true"
+            >${escapeHtml(entry.content)}</textarea>
+            <div class="notes-entry-footer">
+              <span class="notes-entry-date">
+                <i class="fas fa-clock"></i>
+                ${formatDate(entry.createdAt)}
+              </span>
+              <button class="notes-delete-btn" data-entry-id="${entry.id}" title="Delete note">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+  
+  contentDiv.innerHTML = html;
+}
+
+// Render notes content organized by chapter (or page for PDFs)
+function renderNotesContent(book, slot) {
+  const viewer = slot === 1 ? viewer1El : viewer2El;
+  const contentDiv = viewer.querySelector('.notes-content');
+  if (!contentDiv) return;
+  
+  // Check if this is a PDF by looking for pdf-note entries or file extension
+  const isPdf = book.path?.toLowerCase().endsWith('.pdf') || 
+                book.notes?.entries?.some(e => e.type === 'pdf-note');
+  
+  if (!book.notes?.entries || book.notes.entries.length === 0) {
+    contentDiv.innerHTML = `
+      <div class="notes-empty">
+        <i class="fas fa-sticky-note"></i>
+        <h3>No Notes Yet</h3>
+        <p>${isPdf 
+          ? 'Click the note button in the PDF controls to add notes for the current page.' 
+          : 'Highlight text in the book to start building your notes. Click any highlight to jump to it here.'
+        }</p>
+      </div>
+    `;
+    return;
+  }
+  
+  // Separate PDF notes from other types
+  const pdfNotes = book.notes.entries.filter(e => e.type === 'pdf-note');
+  const epubQuotes = book.notes.entries.filter(e => e.type === 'quote');
+  const freeformNotes = book.notes.entries.filter(e => e.type === 'freeform');
+  
+  // If this is a PDF with PDF notes, use page-based grouping
+  if (isPdf && pdfNotes.length > 0) {
+    renderPdfNotesContent(contentDiv, book, pdfNotes, freeformNotes);
+    attachNotesEventListeners(contentDiv, book.path);
+    return;
+  }
+  
+  // Group EPUB entries by chapter
+  const byChapter = {};
+  
+  epubQuotes.forEach(entry => {
+    const chapter = entry.chapter || 'Unknown Chapter';
+    if (!byChapter[chapter]) {
+      byChapter[chapter] = [];
+    }
+    byChapter[chapter].push(entry);
+  });
+  
+  // Sort chapters by first entry's CFI position (book order)
+  const sortedChapters = Object.entries(byChapter).sort((a, b) => {
+    // Get the first entry from each chapter (sorted by CFI)
+    const aEntries = a[1].filter(e => e.cfi).sort((e1, e2) => compareCFI(e1.cfi, e2.cfi));
+    const bEntries = b[1].filter(e => e.cfi).sort((e1, e2) => compareCFI(e1.cfi, e2.cfi));
+    
+    if (aEntries.length === 0 && bEntries.length === 0) return 0;
+    if (aEntries.length === 0) return 1;
+    if (bEntries.length === 0) return -1;
+    
+    return compareCFI(aEntries[0].cfi, bEntries[0].cfi);
+  });
+  
+  let html = '';
+  
+  // Render each chapter
+  sortedChapters.forEach(([chapter, entries]) => {
+    // Sort entries within chapter by CFI position (book order), not creation time
+    entries.sort((a, b) => {
+      // If both have CFIs, compare by CFI
+      if (a.cfi && b.cfi) {
+        return compareCFI(a.cfi, b.cfi);
+      }
+      // If only one has CFI, prioritize it
+      if (a.cfi && !b.cfi) return -1;
+      if (!a.cfi && b.cfi) return 1;
+      // If neither has CFI, fall back to creation time
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+    
+    const conclusion = book.notes.chapterConclusions?.[chapter] || '';
+    
+    html += `
+      <div class="notes-chapter" data-chapter="${escapeHtml(chapter)}">
+        <div class="notes-chapter-header">
+          <h3 class="notes-chapter-title">
+            <i class="fas fa-bookmark"></i>
+            ${escapeHtml(chapter)}
+          </h3>
+          <span class="notes-chapter-count">${entries.length} quote${entries.length !== 1 ? 's' : ''}</span>
+        </div>
+        
+        ${entries.map(entry => `
+          <div class="notes-entry" data-entry-id="${entry.id}">
+            <div class="notes-entry-quote" data-cfi="${escapeHtml(entry.cfi)}" title="Click to jump to this passage">
+              <i class="fas fa-quote-left notes-quote-icon"></i>
+              <span class="notes-quote-content">${escapeHtml(entry.text)}</span>
+            </div>
+            <div class="notes-entry-editor">
+              <textarea 
+                class="notes-textarea" 
+                data-entry-id="${entry.id}" 
+                placeholder="Write your thoughts here..."
+                spellcheck="true"
+              >${entry.comment ? escapeHtml(entry.comment) : ''}</textarea>
+            </div>
+            <div class="notes-entry-footer">
+              <span class="notes-entry-date">
+                <i class="fas fa-clock"></i>
+                ${formatDate(entry.createdAt)}
+              </span>
+              <button class="notes-delete-btn" data-entry-id="${entry.id}" title="Delete entry">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          </div>
+        `).join('')}
+        
+        <div class="notes-chapter-summary">
+          <div class="notes-chapter-summary-header">
+            <i class="fas fa-lightbulb"></i>
+            <span>Chapter Summary</span>
+          </div>
+          <textarea 
+            class="notes-summary-textarea" 
+            data-chapter="${escapeHtml(chapter)}"
+            placeholder="Summarize your key takeaways from this chapter..."
+            spellcheck="true"
+          >${escapeHtml(conclusion)}</textarea>
+        </div>
+      </div>
+    `;
+  });
+  
+  // Render freeform notes at the end
+  if (freeformNotes.length > 0) {
+    html += `
+      <div class="notes-chapter notes-general-section">
+        <div class="notes-chapter-header">
+          <h3 class="notes-chapter-title">
+            <i class="fas fa-sticky-note"></i>
+            General Notes
+          </h3>
+          <span class="notes-chapter-count">${freeformNotes.length} note${freeformNotes.length !== 1 ? 's' : ''}</span>
+        </div>
+        
+        ${freeformNotes.map(entry => `
+          <div class="notes-freeform-entry" data-entry-id="${entry.id}">
+            <textarea 
+              class="notes-freeform-textarea" 
+              data-entry-id="${entry.id}"
+              placeholder="Write your note..."
+              spellcheck="true"
+            >${escapeHtml(entry.content)}</textarea>
+            <div class="notes-entry-footer">
+              <span class="notes-entry-date">
+                <i class="fas fa-clock"></i>
+                ${formatDate(entry.createdAt)}
+              </span>
+              <button class="notes-delete-btn" data-entry-id="${entry.id}" title="Delete note">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+  
+  contentDiv.innerHTML = html;
+  
+  // Add event listeners for interactivity
+  attachNotesEventListeners(contentDiv, book.path);
+}
+
+// Attach event listeners to notes content
+function attachNotesEventListeners(container, bookPath) {
+  // Click on quote to navigate to book location (EPUB)
+  container.querySelectorAll('.notes-entry-quote').forEach(el => {
+    el.addEventListener('click', () => {
+      const cfi = el.dataset.cfi;
+      if (cfi) {
+        navigateToQuoteInBook(bookPath, cfi);
+      }
+    });
+  });
+  
+  // Click on page link to navigate to PDF page
+  container.querySelectorAll('.notes-pdf-page-link').forEach(el => {
+    el.addEventListener('click', () => {
+      const page = parseInt(el.dataset.page);
+      if (page) {
+        navigateToPdfPage(bookPath, page);
+      }
+    });
+  });
+  
+  // Auto-save quote comments on blur
+  container.querySelectorAll('.notes-textarea').forEach(textarea => {
+    let originalValue = textarea.value;
+    
+    textarea.addEventListener('focus', () => {
+      originalValue = textarea.value;
+      textarea.closest('.notes-entry')?.classList.add('editing');
+    });
+    
+    textarea.addEventListener('blur', () => {
+      textarea.closest('.notes-entry')?.classList.remove('editing');
+      const newValue = textarea.value.trim();
+      if (newValue !== originalValue.trim()) {
+        const entryId = parseInt(textarea.dataset.entryId);
+        updateQuoteComment(bookPath, entryId, newValue);
+      }
+    });
+    
+    // Auto-resize textarea
+    textarea.addEventListener('input', () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    });
+    
+    // Initial resize
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(40, textarea.scrollHeight) + 'px';
+  });
+  
+  // Auto-save chapter summaries on blur
+  container.querySelectorAll('.notes-summary-textarea').forEach(textarea => {
+    let originalValue = textarea.value;
+    
+    textarea.addEventListener('focus', () => {
+      originalValue = textarea.value;
+      textarea.closest('.notes-chapter-summary')?.classList.add('editing');
+    });
+    
+    textarea.addEventListener('blur', () => {
+      textarea.closest('.notes-chapter-summary')?.classList.remove('editing');
+      const newValue = textarea.value.trim();
+      if (newValue !== originalValue.trim()) {
+        const chapter = textarea.dataset.chapter;
+        updateChapterConclusion(bookPath, chapter, newValue);
+      }
+    });
+    
+    // Auto-resize textarea
+    textarea.addEventListener('input', () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    });
+    
+    // Initial resize
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(36, textarea.scrollHeight) + 'px';
+  });
+  
+  // Auto-save freeform notes on blur
+  container.querySelectorAll('.notes-freeform-textarea').forEach(textarea => {
+    let originalValue = textarea.value;
+    
+    textarea.addEventListener('focus', () => {
+      originalValue = textarea.value;
+      textarea.closest('.notes-freeform-entry')?.classList.add('editing');
+    });
+    
+    textarea.addEventListener('blur', () => {
+      textarea.closest('.notes-freeform-entry')?.classList.remove('editing');
+      const newValue = textarea.value.trim();
+      if (newValue !== originalValue.trim()) {
+        const entryId = parseInt(textarea.dataset.entryId);
+        updateFreeformNote(bookPath, entryId, newValue);
+      }
+    });
+    
+    // Auto-resize textarea
+    textarea.addEventListener('input', () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    });
+    
+    // Initial resize
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(40, textarea.scrollHeight) + 'px';
+  });
+  
+  // Delete entry buttons
+  container.querySelectorAll('.notes-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const entryId = parseInt(btn.dataset.entryId);
+      if (confirm('Delete this entry?')) {
+        await deleteNoteEntry(bookPath, entryId);
+      }
+    });
+  });
+}
+
+// Update freeform note content
+function updateFreeformNote(bookPath, entryId, content) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries) return;
+  
+  const entry = book.notes.entries.find(e => e.id === entryId);
+  if (entry) {
+    entry.content = content;
+    book.notes.lastModified = Date.now();
+    window.electronAPI.addToLibrary(book);
+  }
+}
+
+// Scroll notes panel to a specific chapter
+function scrollNotesToChapter(chapterLabel) {
+  // Only do this if notes are open
+  if (!notesViewerSlot) return;
+  
+  const viewer = notesViewerSlot === 1 ? viewer1El : viewer2El;
+  const notesContent = viewer.querySelector('.notes-content');
+  if (!notesContent) return;
+  
+  // Find the chapter section with matching name
+  const chapterSections = notesContent.querySelectorAll('.notes-chapter[data-chapter]');
+  for (const section of chapterSections) {
+    const sectionChapter = section.dataset.chapter;
+    // Check if chapter names match (case-insensitive, trimmed)
+    if (sectionChapter && sectionChapter.trim().toLowerCase() === chapterLabel.trim().toLowerCase()) {
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Brief highlight effect
+      section.style.boxShadow = '0 0 0 2px var(--accent)';
+      setTimeout(() => {
+        section.style.boxShadow = '';
+      }, 1500);
+      return;
+    }
+  }
+}
+
+// Navigate to a quote's location in the book
+async function navigateToQuoteInBook(bookPath, cfi) {
+  // If book is in viewer 1, just navigate
+  if (currentBookPath1 === bookPath && rendition1) {
+    try {
+      await rendition1.display(cfi);
+      showToast("Navigated to quote location");
+    } catch (err) {
+      console.warn("Could not navigate to CFI:", err);
+    }
+  } else {
+    // Open the book in viewer 1 then navigate
+    await openBookWithTransition(bookPath, 1);
+    // Wait for book to render
+    setTimeout(async () => {
+      if (rendition1) {
+        try {
+          await rendition1.display(cfi);
+          showToast("Navigated to quote location");
+        } catch (err) {
+          console.warn("Could not navigate to CFI:", err);
+        }
+      }
+    }, 800);
+  }
+}
+
+// Navigate to a PDF page from notes viewer
+async function navigateToPdfPage(bookPath, page) {
+  // If book is in viewer 1 as PDF, just navigate
+  if (currentBookPath1 === bookPath && viewerType1 === 'pdf' && pdf1) {
+    pdfPage1 = page; // Set the page first
+    if (pdfViewMode === 'scroll') {
+      scrollToPage(1, page);
+    } else {
+      await renderPdfPage(1);
+    }
+    savePdfProgress(1);
+    showToast("Navigated to page " + page);
+  } else {
+    // Open the PDF in viewer 1 then navigate
+    await openBookWithTransition(bookPath, 1);
+    // Wait for PDF to load
+    setTimeout(async () => {
+      if (viewerType1 === 'pdf' && pdf1) {
+        pdfPage1 = page; // Set the page first
+        if (pdfViewMode === 'scroll') {
+          scrollToPage(1, page);
+        } else {
+          await renderPdfPage(1);
+        }
+        savePdfProgress(1);
+        showToast("Navigated to page " + page);
+      }
+    }, 800);
+  }
+}
+
+// Format date helper
+function formatDate(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  
+  if (diffDays === 0) {
+    return 'Today ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } else if (diffDays === 1) {
+    return 'Yesterday';
+  } else if (diffDays < 7) {
+    return `${diffDays} days ago`;
+  } else {
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+}
+
+// Prompt functions for editing
+function showEditCommentPrompt(bookPath, entryId, currentComment) {
+  const newComment = prompt('Your thoughts on this quote:', currentComment);
+  if (newComment !== null) {
+    updateQuoteComment(bookPath, entryId, newComment.trim());
+  }
+}
+
+function showEditConclusionPrompt(bookPath, chapter, currentConclusion) {
+  const newConclusion = prompt('Chapter takeaways:', currentConclusion);
+  if (newConclusion !== null) {
+    updateChapterConclusion(bookPath, chapter, newConclusion.trim());
+  }
+}
+
+function showAddFreeformNotePrompt(bookPath) {
+  const content = prompt('Add a general note:');
+  if (content && content.trim()) {
+    addFreeformNote(bookPath, content.trim());
+  }
+}
+
+function showEditFreeformPrompt(bookPath, entryId, currentContent) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries) return;
+  
+  const newContent = prompt('Edit note:', currentContent);
+  if (newContent !== null) {
+    const entry = book.notes.entries.find(e => e.id === entryId);
+    if (entry) {
+      entry.content = newContent.trim();
+      book.notes.lastModified = Date.now();
+      window.electronAPI.addToLibrary(book);
+      
+      if (notesViewerSlot && notesViewerBookPath === bookPath) {
+        renderNotesContent(book, notesViewerSlot);
+      }
+    }
+  }
+}
+
+// Export book notes to markdown (for Obsidian)
+async function exportBookNotesMarkdown(bookPath) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries || book.notes.entries.length === 0) {
+    alert("No notes to export.");
+    return;
+  }
+  
+  // Group entries by chapter
+  const byChapter = {};
+  const freeformNotes = [];
+  
+  book.notes.entries.forEach(entry => {
+    if (entry.type === 'freeform') {
+      freeformNotes.push(entry);
+    } else {
+      const chapter = entry.chapter || 'Unknown Chapter';
+      if (!byChapter[chapter]) {
+        byChapter[chapter] = [];
+      }
+      byChapter[chapter].push(entry);
+    }
+  });
+  
+  // Build markdown
+  const title = book.title || 'Book Notes';
+  const author = book.author || 'Unknown Author';
+  const exportDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  
+  let markdown = `---
+title: "${title}"
+author: "${author}"
+exported: "${exportDate}"
+type: book-notes
+---
+
+# ${title}
+${author ? `*By ${author}*` : ''}
+
+---
+
+`;
+  
+  // Sort chapters by first entry's CFI position (book order)
+  const sortedChapters = Object.entries(byChapter).sort((a, b) => {
+    const aEntries = a[1].filter(e => e.cfi).sort((e1, e2) => compareCFI(e1.cfi, e2.cfi));
+    const bEntries = b[1].filter(e => e.cfi).sort((e1, e2) => compareCFI(e1.cfi, e2.cfi));
+    
+    if (aEntries.length === 0 && bEntries.length === 0) return 0;
+    if (aEntries.length === 0) return 1;
+    if (bEntries.length === 0) return -1;
+    
+    return compareCFI(aEntries[0].cfi, bEntries[0].cfi);
+  });
+  
+  // Render each chapter
+  for (const [chapter, entries] of sortedChapters) {
+    // Sort entries by CFI position (book order)
+    entries.sort((a, b) => {
+      if (a.cfi && b.cfi) {
+        return compareCFI(a.cfi, b.cfi);
+      }
+      if (a.cfi && !b.cfi) return -1;
+      if (!a.cfi && b.cfi) return 1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+    
+    markdown += `## ${chapter}\n\n`;
+    
+    for (const entry of entries) {
+      markdown += `> ${entry.text}\n\n`;
+      if (entry.comment) {
+        markdown += `${entry.comment}\n\n`;
+      }
+    }
+    
+    // Add chapter conclusion if exists
+    const conclusion = book.notes.chapterConclusions?.[chapter];
+    if (conclusion) {
+      markdown += `### 💡 Chapter Takeaways\n\n${conclusion}\n\n`;
+    }
+    
+    markdown += `---\n\n`;
+  }
+  
+  // Add freeform notes
+  if (freeformNotes.length > 0) {
+    markdown += `## General Notes\n\n`;
+    for (const note of freeformNotes) {
+      markdown += `- ${note.content}\n`;
+    }
+    markdown += '\n';
+  }
+  
+  // Stats footer
+  const quoteCount = book.notes.entries.filter(e => e.type === 'quote').length;
+  const commentCount = book.notes.entries.filter(e => e.type === 'quote' && e.comment).length;
+  markdown += `---\n*${quoteCount} quotes • ${commentCount} comments • ${Object.keys(byChapter).length} chapters*\n`;
+  
+  try {
+    const result = await window.electronAPI.exportNotesMarkdown(title + ' - Notes', markdown);
+    if (result.success) {
+      showToast(`Notes exported to: ${result.path}`);
+    } else if (result.error !== 'canceled') {
+      alert(`Failed to export notes: ${result.error}`);
+    }
+  } catch (err) {
+    console.error("Export notes failed:", err);
+    alert("Failed to export notes. Please try again.");
+  }
+}
+
+// Export book notes to PDF
+async function exportBookNotesPdf(bookPath) {
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries || book.notes.entries.length === 0) {
+    alert("No notes to export.");
+    return;
+  }
+  
+  // Group entries by chapter
+  const byChapter = {};
+  const freeformNotes = [];
+  
+  book.notes.entries.forEach(entry => {
+    if (entry.type === 'freeform') {
+      freeformNotes.push(entry);
+    } else {
+      const chapter = entry.chapter || 'Unknown Chapter';
+      if (!byChapter[chapter]) {
+        byChapter[chapter] = [];
+      }
+      byChapter[chapter].push(entry);
+    }
+  });
+  
+  // Build HTML for PDF
+  const title = book.title || 'Book Notes';
+  const author = book.author || 'Unknown Author';
+  const exportDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  
+  let html = `
+    <style>
+      body { font-family: 'Georgia', serif; max-width: 800px; margin: 0 auto; padding: 40px; color: #333; }
+      h1 { font-size: 28px; margin-bottom: 5px; color: #1a1a1a; }
+      .author { font-style: italic; color: #666; margin-bottom: 10px; }
+      .date { font-size: 12px; color: #999; margin-bottom: 30px; }
+      hr { border: none; border-top: 1px solid #ddd; margin: 30px 0; }
+      h2 { font-size: 20px; color: #2c3e50; margin-top: 30px; margin-bottom: 15px; }
+      .quote { background: #f8f9fa; border-left: 3px solid #6c5ce7; padding: 12px 16px; margin: 15px 0; font-style: italic; }
+      .comment { margin: 10px 0 20px 20px; color: #444; }
+      .takeaways { background: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; }
+      .takeaways h3 { font-size: 14px; margin: 0 0 10px 0; color: #856404; }
+      .stats { font-size: 12px; color: #888; text-align: center; margin-top: 40px; }
+    </style>
+    <h1>${escapeHtml(title)}</h1>
+    ${author ? `<p class="author">By ${escapeHtml(author)}</p>` : ''}
+    <p class="date">Exported: ${exportDate}</p>
+    <hr>
+  `;
+  
+  // Sort chapters by first entry's CFI position (book order)
+  const sortedChapters = Object.entries(byChapter).sort((a, b) => {
+    const aEntries = a[1].filter(e => e.cfi).sort((e1, e2) => compareCFI(e1.cfi, e2.cfi));
+    const bEntries = b[1].filter(e => e.cfi).sort((e1, e2) => compareCFI(e1.cfi, e2.cfi));
+    
+    if (aEntries.length === 0 && bEntries.length === 0) return 0;
+    if (aEntries.length === 0) return 1;
+    if (bEntries.length === 0) return -1;
+    
+    return compareCFI(aEntries[0].cfi, bEntries[0].cfi);
+  });
+  
+  // Render each chapter
+  for (const [chapter, entries] of sortedChapters) {
+    // Sort entries by CFI position (book order)
+    entries.sort((a, b) => {
+      if (a.cfi && b.cfi) {
+        return compareCFI(a.cfi, b.cfi);
+      }
+      if (a.cfi && !b.cfi) return -1;
+      if (!a.cfi && b.cfi) return 1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+    
+    html += `<h2>${escapeHtml(chapter)}</h2>`;
+    
+    for (const entry of entries) {
+      html += `<div class="quote">${escapeHtml(entry.text)}</div>`;
+      if (entry.comment) {
+        html += `<p class="comment">${escapeHtml(entry.comment)}</p>`;
+      }
+    }
+    
+    // Add chapter conclusion if exists
+    const conclusion = book.notes.chapterConclusions?.[chapter];
+    if (conclusion) {
+      html += `<div class="takeaways"><h3>💡 Chapter Takeaways</h3>${escapeHtml(conclusion)}</div>`;
+    }
+    
+    html += `<hr>`;
+  }
+  
+  // Add freeform notes
+  if (freeformNotes.length > 0) {
+    html += `<h2>General Notes</h2><ul>`;
+    for (const note of freeformNotes) {
+      html += `<li>${escapeHtml(note.content)}</li>`;
+    }
+    html += `</ul>`;
+  }
+  
+  // Stats footer
+  const quoteCount = book.notes.entries.filter(e => e.type === 'quote').length;
+  const commentCount = book.notes.entries.filter(e => e.type === 'quote' && e.comment).length;
+  html += `<p class="stats">${quoteCount} quotes • ${commentCount} comments • ${Object.keys(byChapter).length} chapters</p>`;
+  
+  try {
+    const result = await window.electronAPI.exportNotesPdf(title + ' - Notes', html);
+    if (result) {
+      showToast('Notes exported to PDF');
+    }
+  } catch (err) {
+    console.error("Export PDF failed:", err);
+    alert("Failed to export PDF. Please try again.");
+  }
 }
 
 // -------------------------------------------------------
@@ -5143,6 +8321,8 @@ function updateTTSAvailability() {
 // -------------------------------------------------------
 // CLOSE MODALS - Updated
 // -------------------------------------------------------
+const searchAnnotationsModal = document.getElementById("search-annotations-modal");
+
 closeModalBtns.forEach(btn => {
   btn.addEventListener("click", () => {
     settingsModal.style.display = "none";
@@ -5152,6 +8332,7 @@ closeModalBtns.forEach(btn => {
     bookmarksModal.style.display = "none";
     highlightsModal.style.display = "none";
     noteModal.style.display = "none";
+    if (searchAnnotationsModal) searchAnnotationsModal.style.display = "none";
   });
 });
 
@@ -5163,49 +8344,445 @@ window.addEventListener("click", (e) => {
   if (e.target === bookmarksModal) bookmarksModal.style.display = "none";
   if (e.target === highlightsModal) highlightsModal.style.display = "none";
   if (e.target === noteModal) noteModal.style.display = "none";
+  if (searchAnnotationsModal && e.target === searchAnnotationsModal) searchAnnotationsModal.style.display = "none";
 });
 
-// Keyboard shortcuts
+// -------------------------------------------------------
+// KEYBOARD SHORTCUTS SYSTEM
+// -------------------------------------------------------
+
+// Check if user is typing in an input field
+function isTyping() {
+  const active = document.activeElement;
+  if (!active) return false;
+  const tagName = active.tagName.toLowerCase();
+  return tagName === 'input' || tagName === 'textarea' || active.isContentEditable;
+}
+
+// Check if any modal is open
+function isModalOpen() {
+  const modals = [settingsModal, tagModal, editBookModal, searchModal, bookmarksModal, highlightsModal, noteModal];
+  return modals.some(m => m && (m.style.display === 'flex' || m.style.display === 'block'));
+}
+
+// Check if in reader view
+function isInReaderView() {
+  return views.reader.style.display !== "none";
+}
+
+// Go to page dialog for PDFs
+function showGoToPageDialog(slot) {
+  const dialog = document.getElementById('goto-page-dialog');
+  const input = document.getElementById('goto-page-input');
+  const totalSpan = document.getElementById('goto-page-total');
+  
+  if (!dialog || !input) return;
+  
+  const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+  const currentPage = slot === 1 ? pdfPage1 : pdfPage2;
+  
+  // Set max and current values
+  input.max = totalPages;
+  input.value = currentPage;
+  totalSpan.textContent = totalPages;
+  
+  // Store which slot we're navigating
+  dialog.dataset.slot = slot;
+  
+  // Show dialog
+  dialog.style.display = 'block';
+  
+  // Focus and select input
+  setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 50);
+}
+
+function hideGoToPageDialog() {
+  const dialog = document.getElementById('goto-page-dialog');
+  if (dialog) dialog.style.display = 'none';
+}
+
+// Handle Go to page input
+document.getElementById('goto-page-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const dialog = document.getElementById('goto-page-dialog');
+    const input = document.getElementById('goto-page-input');
+    const slot = parseInt(dialog?.dataset.slot) || 1;
+    const page = parseInt(input?.value);
+    const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+    
+    if (page && page >= 1 && page <= totalPages) {
+      if (slot === 1) {
+        pdfPage1 = page;
+        if (pdfViewMode === 'scroll') {
+          scrollToPage(1, page);
+        } else {
+          renderPdfPage(1);
+        }
+        savePdfProgress(1);
+      } else {
+        pdfPage2 = page;
+        if (pdfViewMode === 'scroll') {
+          scrollToPage(2, page);
+        } else {
+          renderPdfPage(2);
+        }
+        savePdfProgress(2);
+      }
+      showToast(`Page ${page}`);
+    }
+    
+    hideGoToPageDialog();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    hideGoToPageDialog();
+  }
+});
+
+// Close dialog when clicking outside
+document.getElementById('goto-page-dialog')?.addEventListener('click', (e) => {
+  if (e.target.id === 'goto-page-dialog') {
+    hideGoToPageDialog();
+  }
+});
+
+// Show keyboard shortcuts help
+function showKeyboardShortcutsHelp() {
+  const shortcuts = `
+    <div class="shortcuts-grid">
+      <div class="shortcuts-section">
+        <h4><i class="fas fa-compass"></i> Navigation</h4>
+        <div class="shortcut-row"><kbd>←</kbd> / <kbd>→</kbd><span>Previous / Next page</span></div>
+        <div class="shortcut-row"><kbd>Home</kbd><span>Go to beginning</span></div>
+        <div class="shortcut-row"><kbd>End</kbd><span>Go to end</span></div>
+        <div class="shortcut-row"><kbd>G</kbd><span>Go to page</span></div>
+        <div class="shortcut-row"><kbd>Page Up</kbd><span>Previous chapter / -10 pages</span></div>
+        <div class="shortcut-row"><kbd>Page Down</kbd><span>Next chapter / +10 pages</span></div>
+      </div>
+      <div class="shortcuts-section">
+        <h4><i class="fas fa-window-restore"></i> Views</h4>
+        <div class="shortcut-row"><kbd>L</kbd><span>Library</span></div>
+        <div class="shortcut-row"><kbd>T</kbd><span>Table of Contents</span></div>
+        <div class="shortcut-row"><kbd>V</kbd><span>Toggle Split View</span></div>
+        <div class="shortcut-row"><kbd>1</kbd> / <kbd>2</kbd><span>Focus Viewer 1 / 2</span></div>
+      </div>
+      <div class="shortcuts-section">
+        <h4><i class="fas fa-book-reader"></i> Reading</h4>
+        <div class="shortcut-row"><kbd>Ctrl+F</kbd><span>Search in book</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+B</kbd><span>Bookmarks</span></div>
+        <div class="shortcut-row"><kbd>H</kbd><span>Highlights</span></div>
+        <div class="shortcut-row"><kbd>N</kbd><span>Notes viewer</span></div>
+        <div class="shortcut-row"><kbd>Space</kbd><span>Play/Pause TTS</span></div>
+        <div class="shortcut-row"><kbd>Ctrl+C</kbd><span>Copy selected text</span></div>
+      </div>
+      <div class="shortcuts-section">
+        <h4><i class="fas fa-search-plus"></i> Zoom (PDF)</h4>
+        <div class="shortcut-row"><kbd>+</kbd> / <kbd>=</kbd><span>Zoom in</span></div>
+        <div class="shortcut-row"><kbd>-</kbd><span>Zoom out</span></div>
+        <div class="shortcut-row"><kbd>0</kbd><span>Fit to width</span></div>
+      </div>
+      <div class="shortcuts-section">
+        <h4><i class="fas fa-cog"></i> General</h4>
+        <div class="shortcut-row"><kbd>S</kbd><span>Settings</span></div>
+        <div class="shortcut-row"><kbd>Esc</kbd><span>Close modals</span></div>
+        <div class="shortcut-row"><kbd>?</kbd> / <kbd>F1</kbd><span>Show this help</span></div>
+      </div>
+    </div>
+  `;
+  
+  // Create or update shortcuts modal
+  let shortcutsModal = document.getElementById('shortcuts-modal');
+  if (!shortcutsModal) {
+    shortcutsModal = document.createElement('div');
+    shortcutsModal.id = 'shortcuts-modal';
+    shortcutsModal.className = 'modal';
+    shortcutsModal.innerHTML = `
+      <div class="modal-content shortcuts-modal-content">
+        <div class="modal-header">
+          <h3><i class="fas fa-keyboard"></i> Keyboard Shortcuts</h3>
+          <button class="close-modal">&times;</button>
+        </div>
+        <div class="modal-body shortcuts-body">
+          ${shortcuts}
+        </div>
+      </div>
+    `;
+    document.body.appendChild(shortcutsModal);
+    
+    shortcutsModal.querySelector('.close-modal').addEventListener('click', () => {
+      shortcutsModal.style.display = 'none';
+    });
+    
+    shortcutsModal.addEventListener('click', (e) => {
+      if (e.target === shortcutsModal) shortcutsModal.style.display = 'none';
+    });
+  }
+  
+  shortcutsModal.style.display = 'flex';
+}
+
+// Main keyboard shortcut handler
 document.addEventListener("keydown", (e) => {
-  // Ctrl/Cmd + F for search
-  if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-    if (views.reader.style.display !== "none" && viewerType1 === 'epub') {
-      e.preventDefault();
-      searchBtn?.click();
-    }
-  }
+  const key = e.key.toLowerCase();
+  const ctrl = e.ctrlKey || e.metaKey;
+  const shift = e.shiftKey;
   
-  // Ctrl/Cmd + B for bookmark
-  if ((e.ctrlKey || e.metaKey) && e.key === "b") {
-    if (views.reader.style.display !== "none") {
-      e.preventDefault();
-      bookmarkBtn?.click();
-    }
-  }
-  
-  // Escape to close modals
+  // Escape - always works to close modals
   if (e.key === "Escape") {
     hideHighlightTooltip();
+    hidePdfHighlightTooltip();
+    hideHighlightContextMenu();
+    hidePdfHighlightContextMenu();
+    hideGoToPageDialog();
+    settingsModal.style.display = "none";
     searchModal.style.display = "none";
     bookmarksModal.style.display = "none";
     highlightsModal.style.display = "none";
     noteModal.style.display = "none";
+    document.getElementById('shortcuts-modal')?.style && (document.getElementById('shortcuts-modal').style.display = 'none');
+    return;
+  }
+  
+  // Don't process shortcuts when typing in input fields (except Escape, Ctrl combos, ?, and F1)
+  if (isTyping() && !ctrl && e.key !== '?' && e.key !== 'F1') return;
+  
+  // ? or F1 - Show shortcuts help (works anytime except when typing)
+  if ((e.key === '?' || e.key === 'F1') && !isTyping()) {
+    e.preventDefault();
+    showKeyboardShortcutsHelp();
+    return;
+  }
+  
+  // =============== CTRL/CMD SHORTCUTS ===============
+  if (ctrl) {
+    switch (key) {
+      case 'f': // Search
+        if (isInReaderView()) {
+          e.preventDefault();
+          searchBtn?.click();
+        }
+        break;
+      case 'b': // Bookmarks
+        if (isInReaderView()) {
+          e.preventDefault();
+          bookmarkBtn?.click();
+        }
+        break;
+      case 'g': // Go to page (alternative)
+        if (isInReaderView() && viewerType1 === 'pdf') {
+          e.preventDefault();
+          showGoToPageDialog(1);
+        }
+        break;
+    }
+    return;
+  }
+  
+  // =============== SINGLE KEY SHORTCUTS (only when not in modal) ===============
+  if (isModalOpen()) return;
+  
+  // =============== READER VIEW SHORTCUTS ===============
+  if (isInReaderView()) {
+    switch (key) {
+      // Navigation
+      case 'home':
+        e.preventDefault();
+        if (viewerType1 === 'pdf') {
+          pdfPage1 = 1;
+          if (pdfViewMode === 'scroll') scrollToPage(1, 1);
+          else renderPdfPage(1);
+          savePdfProgress(1);
+        } else if (rendition1) {
+          rendition1.display(0);
+        }
+        break;
+        
+      case 'end':
+        e.preventDefault();
+        if (viewerType1 === 'pdf') {
+          pdfPage1 = pdfTotalPages1;
+          if (pdfViewMode === 'scroll') scrollToPage(1, pdfTotalPages1);
+          else renderPdfPage(1);
+          savePdfProgress(1);
+        } else if (book1?.spine) {
+          const lastItem = book1.spine.last();
+          if (lastItem) rendition1.display(lastItem.href);
+        }
+        break;
+        
+      case 'pageup':
+        e.preventDefault();
+        if (viewerType1 === 'pdf') {
+          pdfPage1 = Math.max(1, pdfPage1 - 10);
+          if (pdfViewMode === 'scroll') scrollToPage(1, pdfPage1);
+          else renderPdfPage(1);
+          savePdfProgress(1);
+        } else if (rendition1) {
+          // Previous chapter - find current chapter and go to previous
+          const loc = rendition1.currentLocation();
+          if (loc?.start?.href && book1?.spine) {
+            const currentIndex = book1.spine.spineItems.findIndex(item => loc.start.href.includes(item.href));
+            if (currentIndex > 0) {
+              rendition1.display(book1.spine.spineItems[currentIndex - 1].href);
+            }
+          }
+        }
+        break;
+        
+      case 'pagedown':
+        e.preventDefault();
+        if (viewerType1 === 'pdf') {
+          pdfPage1 = Math.min(pdfTotalPages1, pdfPage1 + 10);
+          if (pdfViewMode === 'scroll') scrollToPage(1, pdfPage1);
+          else renderPdfPage(1);
+          savePdfProgress(1);
+        } else if (rendition1) {
+          // Next chapter
+          const loc = rendition1.currentLocation();
+          if (loc?.start?.href && book1?.spine) {
+            const currentIndex = book1.spine.spineItems.findIndex(item => loc.start.href.includes(item.href));
+            if (currentIndex < book1.spine.spineItems.length - 1) {
+              rendition1.display(book1.spine.spineItems[currentIndex + 1].href);
+            }
+          }
+        }
+        break;
+        
+      case 'g': // Go to page
+        e.preventDefault();
+        if (viewerType1 === 'pdf') {
+          showGoToPageDialog(1);
+        }
+        break;
+        
+      // Views
+      case 't': // Table of contents / sidebar
+        e.preventDefault();
+        document.getElementById('sidebar-toggle-bottom')?.click();
+        break;
+        
+      case 'v': // Split view
+        e.preventDefault();
+        splitBtn?.click();
+        break;
+        
+      case '1': // Focus viewer 1
+        e.preventDefault();
+        focusedSlot = 1;
+        updateFocusUI();
+        break;
+        
+      case '2': // Focus viewer 2
+        e.preventDefault();
+        if (viewersContainer.classList.contains('split-mode')) {
+          focusedSlot = 2;
+          updateFocusUI();
+        }
+        break;
+        
+      // Reading features
+      case 'h': // Highlights
+        e.preventDefault();
+        highlightsBtn?.click();
+        break;
+        
+      case 'n': // Notes viewer
+        e.preventDefault();
+        if (currentBookPath1) {
+          if (viewersContainer.classList.contains('split-mode')) {
+            openNotesViewer(currentBookPath1, 2);
+          } else {
+            // Toggle split view and open notes
+            splitBtn?.click();
+            setTimeout(() => openNotesViewer(currentBookPath1, 2), 100);
+          }
+        }
+        break;
+        
+      case ' ': // Space - Play/Pause TTS
+        e.preventDefault();
+        document.getElementById('speakBtn')?.click();
+        break;
+        
+      // PDF Zoom
+      case '+':
+      case '=':
+        if (viewerType1 === 'pdf' && pdfViewMode === 'scroll') {
+          e.preventDefault();
+          document.getElementById('zoom-in-1')?.click();
+        }
+        break;
+        
+      case '-':
+        if (viewerType1 === 'pdf' && pdfViewMode === 'scroll') {
+          e.preventDefault();
+          document.getElementById('zoom-out-1')?.click();
+        }
+        break;
+        
+      case '0':
+        if (viewerType1 === 'pdf' && pdfViewMode === 'scroll') {
+          e.preventDefault();
+          document.getElementById('zoom-fit-1')?.click();
+        }
+        break;
+    }
+  }
+  
+  // =============== GLOBAL SHORTCUTS ===============
+  switch (key) {
+    case 'l': // Library
+      e.preventDefault();
+      if (isInReaderView()) {
+        switchView('library');
+      } else {
+        // If already in library, do nothing or maybe focus search
+      }
+      break;
+      
+    case 's': // Settings (only when not in modal or typing)
+      if (!isTyping()) {
+        e.preventDefault();
+        document.getElementById('settings-btn-bottom')?.click();
+      }
+      break;
   }
 });
 
-// Hide highlight tooltip when clicking elsewhere (with delay to allow selection to complete)
+// Hide highlight tooltip and context menu when clicking elsewhere
 document.addEventListener("mousedown", (e) => {
   // Don't hide if clicking on the tooltip itself
   if (e.target.closest(".highlight-tooltip")) return;
+  if (e.target.closest(".pdf-highlight-tooltip")) return;
+  
+  // Don't hide context menu if clicking on it
+  if (e.target.closest(".highlight-context-menu")) return;
   
   // Don't hide if clicking in a modal (note modal needs pendingHighlight)
   if (e.target.closest(".modal")) return;
   
-  // Don't immediately hide if clicking in the viewer (selection might be happening)
-  if (e.target.closest("#viewer") || e.target.closest("#viewer-2")) return;
+  // Don't immediately hide tooltip if clicking in the viewer (selection might be happening)
+  // But DO hide context menu since we're clicking elsewhere
+  if (e.target.closest("#viewer") || e.target.closest("#viewer-2")) {
+    hideHighlightContextMenu();
+    return;
+  }
+  
+  // Don't hide tooltip if clicking in PDF text layer (selection might be happening)
+  if (e.target.closest(".pdf-text-layer")) {
+    hideHighlightContextMenu();
+    hidePdfHighlightContextMenu();
+    return;
+  }
   
   // Hide if clicking elsewhere
   hideHighlightTooltip();
+  hidePdfHighlightTooltip();
+  hideHighlightContextMenu();
+  hidePdfHighlightContextMenu();
 });
 
 // Handle window resize for PDF and EPUB
@@ -5215,6 +8792,9 @@ window.addEventListener('resize', () => {
   if (resizeTimeout) clearTimeout(resizeTimeout);
   
   resizeTimeout = setTimeout(() => {
+    // Don't re-render if user is selecting text
+    if (isPdfTextSelecting) return;
+    
     // Handle PDF resize
     if (viewerType1 === 'pdf') renderPdfPage(1);
     if (viewerType2 === 'pdf') renderPdfPage(2);
@@ -5237,3 +8817,220 @@ window.addEventListener('resize', () => {
     hideHighlightTooltip();
   }, 150);
 });
+
+// Detect PDF text selection to prevent re-rendering during selection
+let pdfSelectionTimeout = null;
+
+document.addEventListener('selectionchange', () => {
+  const selection = window.getSelection();
+  if (selection && selection.toString().length > 0) {
+    // Check if selection is within a PDF text layer
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    if (anchorNode || focusNode) {
+      const anchorInPdf = anchorNode?.parentElement?.closest('.pdf-text-layer');
+      const focusInPdf = focusNode?.parentElement?.closest('.pdf-text-layer');
+      if (anchorInPdf || focusInPdf) {
+        isPdfTextSelecting = true;
+        // Reset the timeout each time selection changes
+        if (pdfSelectionTimeout) clearTimeout(pdfSelectionTimeout);
+        pdfSelectionTimeout = setTimeout(() => {
+          isPdfTextSelecting = false;
+        }, 2000); // Keep flag active for 2 seconds after last selection change
+      }
+    }
+  }
+});
+
+document.addEventListener('mouseup', (e) => {
+  // Clear selection flag after mouse up with a longer delay
+  if (pdfSelectionTimeout) clearTimeout(pdfSelectionTimeout);
+  pdfSelectionTimeout = setTimeout(() => {
+    isPdfTextSelecting = false;
+  }, 1000);
+  
+  // Check for PDF text selection to show highlight tooltip
+  if (e.target.closest('.pdf-text-layer')) {
+    // Small delay to ensure selection is complete
+    setTimeout(() => {
+      handlePdfTextSelection(e);
+    }, 50);
+  }
+});
+
+// Handle PDF text selection and show highlight tooltip
+function handlePdfTextSelection(e) {
+  // Determine which slot the selection is in
+  let slot = 1;
+  const textLayer = e.target.closest('.pdf-text-layer');
+  if (textLayer) {
+    if (textLayer.id === 'pdf-text-layer-2' || textLayer.closest('#pdf-container-2') || textLayer.closest('#pdf-scroll-2')) {
+      slot = 2;
+    }
+  }
+  
+  // Capture selection
+  const selectionData = capturePdfSelection(slot);
+  if (!selectionData) return;
+  
+  // Store in pendingHighlight
+  pendingHighlight = {
+    isPdfHighlight: true,
+    slot: slot,
+    selectionData: selectionData,
+    editMode: false
+  };
+  
+  // Get selection position for tooltip
+  const selection = window.getSelection();
+  if (!selection.rangeCount) return;
+  
+  const range = selection.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+  
+  // Position tooltip above selection - use PDF-specific tooltip
+  const tooltipX = rect.left + rect.width / 2;
+  const tooltipY = rect.top;
+  
+  showPdfHighlightTooltip(tooltipX, tooltipY);
+}
+
+// Show PDF highlight tooltip (simpler version)
+function showPdfHighlightTooltip(x, y) {
+  if (!pdfHighlightTooltip) return;
+  
+  // Reset styles
+  pdfHighlightTooltip.style.transform = "";
+  pdfHighlightTooltip.style.marginTop = "";
+  
+  // Position tooltip above selection
+  pdfHighlightTooltip.style.left = `${x}px`;
+  pdfHighlightTooltip.style.top = `${y}px`;
+  pdfHighlightTooltip.style.display = "flex";
+  
+  // Re-trigger animation
+  pdfHighlightTooltip.style.animation = 'none';
+  void pdfHighlightTooltip.offsetHeight;
+  pdfHighlightTooltip.style.animation = '';
+  
+  // Adjust position if off-screen
+  requestAnimationFrame(() => {
+    const rect = pdfHighlightTooltip.getBoundingClientRect();
+    let newX = x;
+    let newY = y;
+    
+    if (rect.left < 10) {
+      newX = 10 + rect.width / 2;
+    } else if (rect.right > window.innerWidth - 10) {
+      newX = window.innerWidth - 10 - rect.width / 2;
+    }
+    
+    if (rect.top < 10) {
+      pdfHighlightTooltip.style.transform = "translate(-50%, 10px)";
+      pdfHighlightTooltip.style.marginTop = "0";
+      newY = y + 25;
+    }
+    
+    pdfHighlightTooltip.style.left = `${newX}px`;
+    pdfHighlightTooltip.style.top = `${newY}px`;
+  });
+}
+
+function hidePdfHighlightTooltip() {
+  if (pdfHighlightTooltip) {
+    pdfHighlightTooltip.style.display = "none";
+    pdfHighlightTooltip.style.transform = "";
+    pdfHighlightTooltip.style.marginTop = "";
+  }
+}
+
+// PDF highlight tooltip color buttons
+pdfHighlightTooltip?.querySelectorAll(".pdf-hl-color").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    if (!pendingHighlight || !pendingHighlight.isPdfHighlight) return;
+    
+    const color = btn.dataset.color;
+    await createPdfHighlight(pendingHighlight.slot, pendingHighlight.selectionData, color);
+    hidePdfHighlightTooltip();
+    pendingHighlight = null;
+  });
+});
+
+// PDF copy text button
+document.getElementById("pdfCopyTextBtn")?.addEventListener("click", async () => {
+  if (!pendingHighlight || !pendingHighlight.selectionData) return;
+  
+  try {
+    await navigator.clipboard.writeText(pendingHighlight.selectionData.text);
+    showToast("Text copied to clipboard");
+    hidePdfHighlightTooltip();
+    window.getSelection()?.removeAllRanges();
+    pendingHighlight = null;
+  } catch (err) {
+    console.error("Failed to copy:", err);
+  }
+});
+
+// Delete all highlights on current page
+async function deletePageHighlights(slot) {
+  const bookPath = slot === 1 ? currentBookPath1 : currentBookPath2;
+  const pageNum = slot === 1 ? pdfPage1 : pdfPage2;
+  
+  const book = library.find(b => b.path === bookPath);
+  if (!book?.notes?.entries) return;
+  
+  // In spread mode, also include the right page
+  const isSplitMode = viewersContainer.classList.contains("split-mode");
+  const totalPages = slot === 1 ? pdfTotalPages1 : pdfTotalPages2;
+  const pagesToDelete = [pageNum];
+  if (!isSplitMode && pageNum + 1 <= totalPages) {
+    pagesToDelete.push(pageNum + 1);
+  }
+  
+  // Count highlights to delete
+  const highlightsToDelete = book.notes.entries.filter(
+    e => e.type === 'pdf-highlight' && pagesToDelete.includes(e.page)
+  );
+  
+  if (highlightsToDelete.length === 0) {
+    showToast("No highlights on this page");
+    return;
+  }
+  
+  // Confirm deletion
+  const pageLabel = pagesToDelete.length > 1 ? `pages ${pagesToDelete.join(' & ')}` : `page ${pageNum}`;
+  if (!confirm(`Delete ${highlightsToDelete.length} highlight(s) on ${pageLabel}?`)) {
+    return;
+  }
+  
+  // Remove highlights
+  book.notes.entries = book.notes.entries.filter(
+    e => !(e.type === 'pdf-highlight' && pagesToDelete.includes(e.page))
+  );
+  book.notes.lastModified = Date.now();
+  await window.electronAPI.addToLibrary(book);
+  
+  // Re-render
+  if (pdfViewMode === 'scroll') {
+    const scrollContent = slot === 1 ? pdfScrollContent1 : pdfScrollContent2;
+    pagesToDelete.forEach(p => {
+      const pageEl = scrollContent?.querySelector(`[data-page-num="${p}"]`);
+      if (pageEl) renderPdfHighlightsForScrollPage(slot, p, pageEl);
+    });
+  } else {
+    renderPdfHighlightsForPage(slot, pageNum, pagesToDelete.length > 1 ? pagesToDelete[1] : null);
+  }
+  
+  renderLibrary();
+  showToast(`Deleted ${highlightsToDelete.length} highlight(s)`);
+}
+
+document.addEventListener('mousedown', (e) => {
+  // If clicking in PDF text layer, set selection flag
+  if (e.target.closest('.pdf-text-layer')) {
+    isPdfTextSelecting = true;
+    // Clear any pending timeout
+    if (pdfSelectionTimeout) clearTimeout(pdfSelectionTimeout);
+  }
+});
+
